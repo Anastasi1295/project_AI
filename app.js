@@ -1,4 +1,6 @@
+// Main logic for analyzing random reviews from TSV using Hugging Face Inference API.
 document.addEventListener('DOMContentLoaded', function() {
+    // UI elements
     const analyzeBtn = document.getElementById('analyzeBtn');
     const apiTokenInput = document.getElementById('apiToken');
     const reviewTextElement = document.getElementById('reviewText');
@@ -6,10 +8,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const resultContainer = document.getElementById('resultContainer');
     const loadingElement = document.getElementById('loading');
     const errorElement = document.getElementById('error');
-    
+   
+    // Reviews array
     let reviews = [];
     
-    // Load and parse the TSV file
+    // Load and parse TSV file 
     fetch('reviews_test.tsv')
         .then(response => response.text())
         .then(tsvData => {
@@ -31,24 +34,22 @@ document.addEventListener('DOMContentLoaded', function() {
             showError('Error loading reviews: ' + error.message);
         });
     
+    // Button click handler
     analyzeBtn.addEventListener('click', function() {
         analyzeRandomReview();
     });
-    
+    // Select random review and analyze
     function analyzeRandomReview() {
-        // Hide previous results and errors
+        
         resultContainer.classList.add('hidden');
         errorElement.classList.add('hidden');
         loadingElement.classList.remove('hidden');
         
-        // Select a random review
         const randomIndex = Math.floor(Math.random() * reviews.length);
         const randomReview = reviews[randomIndex];
         
-        // Display the review text
         reviewTextElement.textContent = randomReview;
         
-        // Prepare the API request
         const apiToken = apiTokenInput.value.trim();
         const model = "siebert/sentiment-roberta-large-english";
         const apiUrl = `https://api-inference.huggingface.co/models/${model}`;
@@ -82,8 +83,6 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             loadingElement.classList.add('hidden');
             resultContainer.classList.remove('hidden');
-            
-            // Handle the response
             if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0]) && data[0].length > 0) {
                 const result = data[0][0];
                 displaySentiment(result);
@@ -97,6 +96,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Display sentiment result with icon and label
     function displaySentiment(result) {
         sentimentResultElement.innerHTML = '';
         
@@ -124,7 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         sentimentResultElement.appendChild(sentimentElement);
     }
-    
+    // Show error message
     function showError(message) {
         errorElement.textContent = message;
         errorElement.classList.remove('hidden');
