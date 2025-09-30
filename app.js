@@ -1,37 +1,44 @@
 let reviews = [];
-let currentReview = "";
-const reviewDiv = document.getElementById("review");
-const resultDiv = document.getElementById("result");
-const errorDiv = document.getElementById("error");
-const spinner = document.getElementById("spinner");
+let currentReview = '';
 
-async function loadReviews() {
-  try {
-    const res = await fetch("reviews_test.tsv");
-    if (!res.ok) throw new Error("TSV file not found. Check that 'reviews_test.tsv' is in the same folder.");
-    const text = await res.text();
-    const parsed = Papa.parse(text, { header: true, delimiter: "\t" });
-    reviews = parsed.data.filter(r => r.text);
-    if (reviews.length === 0) throw new Error("No reviews found in TSV. Make sure there is a 'text' column.");
-  } catch (e) {
-    showError(e.message);
-  }
-}
-loadReviews();
+document.addEventListener('DOMContentLoaded', () => {
+  const randomBtn = document.getElementById('randomBtn');
+  const sentimentBtn = document.getElementById('sentimentBtn');
+  const nounBtn = document.getElementById('nounBtn');
+  const reviewTextEl = document.getElementById('reviewText');
+  const resultEl = document.getElementById('result');
+  const sentimentEl = document.getElementById('sentiment');
+  const nounsEl = document.getElementById('nouns');
+  const spinner = document.getElementById('spinner');
+  const errorEl = document.getElementById('error');
+  const hfTokenInput = document.getElementById('hfToken');
 
-document.getElementById("randomBtn").addEventListener("click", () => {
-  resetError();
-  if (!reviews.length) return showError("Reviews not loaded. Check 'reviews_test.tsv' file.");
-  const random = reviews[Math.floor(Math.random() * reviews.length)];
-  currentReview = random.text;
-  reviewDiv.textContent = currentReview;
-  resultDiv.innerHTML = `Sentiment: ❓ <br /> Noun Level: 🔴`;
-});
+  // Fetch and parse TSV
+  fetch('reviews_test.tsv')
+    .then(r => r.text())
+    .then(data => {
+      const parsed = Papa.parse(data, { header: true, skipEmptyLines: true });
+      reviews = parsed.data.filter(row => row.text);
+      randomBtn.disabled = false;
+    })
+    .catch(() => showError('Failed to load reviews.'));
 
-document.getElementById("sentimentBtn").addEventListener("click", async () => {
-  if (!currentReview) return showError("No review selected. Click 'Random Review' first.");
-  const prompt = `
-You are a precise sentiment classifier.
+  randomBtn.addEventListener('click', () => {
+    if (reviews.length === 0) return;
+    currentReview = reviews[Math.floor(Math.random() * reviews.length)].text;
+    reviewTextEl.textContent = currentReview;
+    resultEl.style.display = 'none';
+    sentimentBtn.disabled = false;
+    nounBtn.disabled = false;
+    hideError();
+  });
+
+  sentimentBtn.addEventListener('click', async () => {
+    if (!currentReview) return;
+    showSpinner();
+    hideError();
+    try {
+      const prompt = `You are a precise sentiment classifier.
 
 TASK
 Read the customer review between triple quotes and decide the overall sentiment.
@@ -51,16 +58,27 @@ OUTPUT
 Return exactly one word in lowercase — positive, negative, or neutral — on the FIRST line. No punctuation or extra text.
 
 REVIEW
-"""${currentReview}"""
-`;
-  const sentiment = await callApi(prompt);
-  updateSentimentUI(sentiment);
-});
+"""${currentReview.trim()}"""`;
+      const response = await callApi(prompt);
+      const label = response.split('\n')[0].trim().toLowerCase();
+      let icon = '❓';
+      if (label === 'positive') icon = '👍';
+      else if (label === 'negative') icon = '👎';
+      sentimentEl.textContent = `${icon} ${label}`;
+      resultEl.style.display = 'block';
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      hideSpinner();
+    }
+  });
 
-document.getElementById("nounBtn").addEventListener("click", async () => {
-  if (!currentReview) return showError("No review selected. Click 'Random Review' first.");
-  const prompt = `
-You are a part-of-speech analyzer and counter.
+  nounBtn.addEventListener('click', async () => {
+    if (!currentReview) return;
+    showSpinner();
+    hideError();
+    try {
+      const prompt = `You are a part-of-speech analyzer and counter.
 
 TASK
 From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level.
@@ -81,89 +99,64 @@ OUTPUT
 Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.
 
 REVIEW
-"""${currentReview}"""
-`;
-  const level = await callApi(prompt);
-  updateNounUI(level);
-});
+"""${currentReview.trim()}"""`;
+      const response = await callApi(prompt);
+      const level = response.split('\n')[0].trim().toLowerCase();
+      let color = '🔴';
+      if (level === 'high') color = '🟢';
+      else if (level === 'medium') color = '🟡';
+      nounsEl.textContent = `${color} ${level}`;
+      resultEl.style.display = 'block';
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      hideSpinner();
+    }
+  });
 
-async function callApi(prompt) {
-  resetError();
-  spinner.style.display = "block";
-  const token = document.getElementById("token").value.trim();
+  async function callApi(prompt) {
+    const url = 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct';
+    const headers = { 'Content-Type': 'application/json' };
+    const token = hfTokenInput.value.trim();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  try {
-    const res = await fetch("https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token && { Authorization: `Bearer ${token}` })
-      },
-      body: JSON.stringify({ inputs: prompt })
+    const body = { inputs: prompt };
+
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
     });
 
-    if (res.status === 401) throw new Error("Invalid token. Check your Hugging Face API token.");
-    if (res.status === 402) throw new Error("Payment required (402). This model may need a paid plan or a valid token.");
-    if (res.status === 403) throw new Error("Forbidden. Your token might not have 'api' permissions.");
-    if (res.status === 429) throw new Error("Rate limit exceeded. Try again in a few minutes.");
-    if (!res.ok) throw new Error(`Unexpected error: ${res.status} ${res.statusText}`);
-
-    const data = await res.json();
-    spinner.style.display = "none";
-
-    let text = "";
-
-    // Parse output from different Hugging Face response formats
-    if (Array.isArray(data) && data[0]?.generated_text) {
-      text = data[0].generated_text;
-    } else if (data?.generated_text) {
-      text = data.generated_text;
-    } else if (data?.[0]?.generated_text) {
-      text = data[0].generated_text;
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      if (resp.status === 429) throw new Error('Too many requests. Try again later.');
+      if (resp.status === 402) throw new Error('API rate limit exceeded. Use your token.');
+      throw new Error(`Error ${resp.status}: ${errData.error || 'Unknown error'}`);
     }
 
-    if (!text) {
-      throw new Error("Model returned no text. Check if the model supports text-generation.");
+    const data = await resp.json();
+    if (data && Array.isArray(data) && data[0] && data[0].generated_text) {
+      return data[0].generated_text;
     }
-
-    return text.split("\n")[0].trim().toLowerCase();
-
-  } catch (e) {
-    spinner.style.display = "none";
-    if (e.message.includes("fetch") || e.message.includes("Failed")) {
-      showError("Network error: Cannot reach Hugging Face API. Check your internet or CORS settings.");
-    } else {
-      showError(e.message);
-    }
-    return "";
+    throw new Error('Invalid response from model.');
   }
-}
 
-function updateSentimentUI(sentiment) {
-  let emoji = "❓";
-  if (sentiment.includes("positive")) emoji = "👍";
-  if (sentiment.includes("negative")) emoji = "👎";
-  if (sentiment.includes("neutral")) emoji = "❓";
+  function showSpinner() {
+    spinner.style.display = 'block';
+  }
 
-  const existing = resultDiv.innerHTML.split("<br />")[1] || "Noun Level: 🔴";
-  resultDiv.innerHTML = `Sentiment: ${emoji} <br /> ${existing}`;
-}
+  function hideSpinner() {
+    spinner.style.display = 'none';
+  }
 
-function updateNounUI(level) {
-  let emoji = "🔴";
-  if (level.includes("high")) emoji = "🟢";
-  if (level.includes("medium")) emoji = "🟡";
-  if (level.includes("low")) emoji = "🔴";
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.style.display = 'block';
+    hideSpinner();
+  }
 
-  const existing = resultDiv.innerHTML.split("<br />")[0] || "Sentiment: ❓";
-  resultDiv.innerHTML = `${existing} <br /> Noun Level: ${emoji}`;
-}
-
-function showError(msg) {
-  errorDiv.textContent = msg;
-  console.error("[Review Analyzer Error] " + msg);
-}
-
-function resetError() {
-  errorDiv.textContent = "";
-}
+  function hideError() {
+    errorEl.style.display = 'none';
+  }
+});
