@@ -39,11 +39,18 @@ async function callApi(prompt, text) {
   };
 
   try {
-    const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct', {
+    const response = await fetch('https://api-inference.huggingface.co/models/EleutherAI/gpt-j-6B', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ inputs: prompt + text })
     });
+
+    if (response.status === 402) {
+      throw new Error('Payment required or API limit reached');
+    }
+    if (response.status === 429) {
+      throw new Error('Too many requests. Please try again later.');
+    }
 
     if (!response.ok) {
       throw new Error(`API Error: ${response.statusText}`);
