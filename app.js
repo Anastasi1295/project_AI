@@ -1,162 +1,159 @@
 let reviews = [];
-let currentReview = '';
 
-document.addEventListener('DOMContentLoaded', () => {
-  const randomBtn = document.getElementById('randomBtn');
-  const sentimentBtn = document.getElementById('sentimentBtn');
-  const nounBtn = document.getElementById('nounBtn');
-  const reviewTextEl = document.getElementById('reviewText');
-  const resultEl = document.getElementById('result');
-  const sentimentEl = document.getElementById('sentiment');
-  const nounsEl = document.getElementById('nouns');
-  const spinner = document.getElementById('spinner');
-  const errorEl = document.getElementById('error');
-  const hfTokenInput = document.getElementById('hfToken');
+document.addEventListener("DOMContentLoaded", () => {
+  const randomBtn = document.getElementById("randomBtn");
+  const sentimentBtn = document.getElementById("sentimentBtn");
+  const nounBtn = document.getElementById("nounBtn");
+  const tokenInput = document.getElementById("token");
+  const reviewTextEl = document.getElementById("reviewText");
+  const sentimentResultEl = document.getElementById("sentimentResult");
+  const nounResultEl = document.getElementById("nounResult");
+  const errorDiv = document.getElementById("error");
+  const spinner = document.getElementById("spinner");
 
-  // Fetch and parse TSV
-  fetch('reviews_test.tsv')
-    .then(r => r.text())
-    .then(data => {
-      const parsed = Papa.parse(data, { header: true, skipEmptyLines: true });
-      reviews = parsed.data.filter(row => row.text);
-      randomBtn.disabled = false;
+  const showSpinner = () => {
+    spinner.classList.remove("hidden");
+  };
+
+  const hideSpinner = () => {
+    spinner.classList.add("hidden");
+  };
+
+  const showError = (msg) => {
+    errorDiv.textContent = msg;
+    errorDiv.classList.remove("hidden");
+  };
+
+  const clearError = () => {
+    errorDiv.classList.add("hidden");
+    errorDiv.textContent = "";
+  };
+
+  const resetResults = () => {
+    reviewTextEl.textContent = "";
+    sentimentResultEl.textContent = "";
+    nounResultEl.textContent = "";
+    clearError();
+  };
+
+  fetch("reviews_test.tsv")
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
     })
-    .catch(() => showError('Failed to load reviews.'));
-
-  randomBtn.addEventListener('click', () => {
-    if (reviews.length === 0) return;
-    currentReview = reviews[Math.floor(Math.random() * reviews.length)].text;
-    reviewTextEl.textContent = currentReview;
-    resultEl.style.display = 'none';
-    sentimentBtn.disabled = false;
-    nounBtn.disabled = false;
-    hideError();
-  });
-
-  sentimentBtn.addEventListener('click', async () => {
-    if (!currentReview) return;
-    showSpinner();
-    hideError();
-    try {
-      const prompt = `You are a precise sentiment classifier.
-
-TASK
-Read the customer review between triple quotes and decide the overall sentiment.
-
-LABELS
-- positive
-- negative
-- neutral (use when mixed/unclear)
-
-RULES
-- Judge overall tone and intent, not isolated words.
-- Ignore sarcasm unless clearly signaled.
-- Ignore star/emoji counts and metadata.
-- If uncertain, choose "neutral".
-
-OUTPUT
-Return exactly one word in lowercase — positive, negative, or neutral — on the FIRST line. No punctuation or extra text.
-
-REVIEW
-"""${currentReview.trim()}"""`;
-      const response = await callApi(prompt);
-      const label = response.split('\n')[0].trim().toLowerCase();
-      let icon = '❓';
-      if (label === 'positive') icon = '👍';
-      else if (label === 'negative') icon = '👎';
-      sentimentEl.textContent = `${icon} ${label}`;
-      resultEl.style.display = 'block';
-    } catch (err) {
-      showError(err.message);
-    } finally {
-      hideSpinner();
-    }
-  });
-
-  nounBtn.addEventListener('click', async () => {
-    if (!currentReview) return;
-    showSpinner();
-    hideError();
-    try {
-      const prompt = `You are a part-of-speech analyzer and counter.
-
-TASK
-From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level.
-
-COUNTING MECHANISM
-- Tokenize the text (treat hyphenated terms as one token).
-- Select ONLY nouns: common and proper, singular or plural (e.g., “product”, “bottles”, “Amazon”, “Dr. Oz”).
-- DO NOT count: pronouns, verbs, adjectives, adverbs, numbers, dates, interjections, symbols, or emojis.
-- Count all noun tokens (repeated nouns count each time they appear).
-- Ignore HTML, URLs, and IDs.
-
-LEVEL RULES
-- high  → noun count > 15
-- medium → noun count 6–15
-- low   → noun count < 6
-
-OUTPUT
-Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.
-
-REVIEW
-"""${currentReview.trim()}"""`;
-      const response = await callApi(prompt);
-      const level = response.split('\n')[0].trim().toLowerCase();
-      let color = '🔴';
-      if (level === 'high') color = '🟢';
-      else if (level === 'medium') color = '🟡';
-      nounsEl.textContent = `${color} ${level}`;
-      resultEl.style.display = 'block';
-    } catch (err) {
-      showError(err.message);
-    } finally {
-      hideSpinner();
-    }
-  });
-
-  async function callApi(prompt) {
-    const url = 'https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct';
-    const headers = { 'Content-Type': 'application/json' };
-    const token = hfTokenInput.value.trim();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const body = { inputs: prompt };
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body)
+    .then((tsvData) => {
+      Papa.parse(tsvData, {
+        header: true,
+        delimiter: "\t",
+        skipEmptyLines: true,
+        complete: (results) => {
+          reviews = results.data.filter(row => row.text);
+        },
+        error: (err) => {
+          showError("Error parsing TSV: " + err.message);
+        },
+      });
+    })
+    .catch((err) => {
+      showError("Failed to load reviews: " + err.message);
     });
 
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({}));
-      if (resp.status === 429) throw new Error('Too many requests. Try again later.');
-      if (resp.status === 402) throw new Error('API rate limit exceeded. Use your token.');
-      throw new Error(`Error ${resp.status}: ${errData.error || 'Unknown error'}`);
+  randomBtn.addEventListener("click", () => {
+    resetResults();
+    if (reviews.length === 0) {
+      showError("No reviews loaded yet.");
+      return;
+    }
+    const randomIndex = Math.floor(Math.random() * reviews.length);
+    const review = reviews[randomIndex].text;
+    reviewTextEl.textContent = review;
+  });
+
+  const callApi = async (prompt, text) => {
+    const fullPrompt = prompt + `\n\n"""${text}"""`;
+    const headers = { "Content-Type": "application/json" };
+    const token = tokenInput.value.trim();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const data = await resp.json();
-    if (data && Array.isArray(data) && data[0] && data[0].generated_text) {
-      return data[0].generated_text;
+    try {
+      showSpinner();
+      clearError();
+      const response = await fetch(
+        "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct",
+        {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({ inputs: fullPrompt }),
+        }
+      );
+
+      hideSpinner();
+
+      if (response.status === 402 || response.status === 429) {
+        const errorMsg = await response.json();
+        showError(
+          `API limit reached or payment required (${response.status}): ${
+            errorMsg.error || "Try again later."
+          }`
+        );
+        return null;
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const output = await response.json();
+      let result = Array.isArray(output) && output[0] && output[0].generated_text ? output[0].generated_text : String(output);
+      return result.trim().split("\n")[0].toLowerCase();
+    } catch (err) {
+      hideSpinner();
+      showError("Request failed: " + err.message);
+      return null;
     }
-    throw new Error('Invalid response from model.');
-  }
+  };
 
-  function showSpinner() {
-    spinner.style.display = 'block';
-  }
+  sentimentBtn.addEventListener("click", async () => {
+    if (!reviewTextEl.textContent) {
+      showError("Please select a review first.");
+      return;
+    }
+    const text = reviewTextEl.textContent;
+    const prompt = "Read the customer review between triple quotes and decide the overall sentiment. Rules: - Judge overall tone and intent, not isolated words. - Ignore sarcasm unless clearly signaled. - Ignore star/emoji counts and metadata. - If uncertain, choose \"neutral\". Classify this review as positive, negative, or neutral:";
+    const result = await callApi(prompt, text);
+    if (!result) return;
 
-  function hideSpinner() {
-    spinner.style.display = 'none';
-  }
+    let emoji = "❓";
+    if (result.includes("positive")) emoji = "👍";
+    else if (result.includes("negative")) emoji = "👎";
 
-  function showError(msg) {
-    errorEl.textContent = msg;
-    errorEl.style.display = 'block';
-    hideSpinner();
-  }
+    sentimentResultEl.textContent = `Sentiment: ${emoji}`;
+  });
 
-  function hideError() {
-    errorEl.style.display = 'none';
-  }
+  nounBtn.addEventListener("click", async () => {
+    if (!reviewTextEl.textContent) {
+      showError("Please select a review first.");
+      return;
+    }
+    const text = reviewTextEl.textContent;
+    const prompt =
+      "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level. - Tokenize the text (treat hyphenated terms as one token). - Select ONLY nouns: common and proper, singular or plural (e.g., “product”, “bottles”, “Amazon”, “Dr. Oz”). - DO NOT count: pronouns, verbs, adjectives, adverbs, numbers, dates, interjections, symbols, or emojis. - Count all noun tokens (repeated nouns count each time they appear). - Ignore HTML, URLs, and IDs. Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.";
+    const result = await callApi(prompt, text);
+    if (!result) return;
+
+    let emoji = "🔴";
+    let level = "Low";
+    if (result.includes("high")) {
+      emoji = "🟢";
+      level = "High";
+    } else if (result.includes("medium")) {
+      emoji = "🟡";
+      level = "Medium";
+    }
+
+    nounResultEl.textContent = `Noun count level: ${emoji}(${level})`;
+  });
 });
