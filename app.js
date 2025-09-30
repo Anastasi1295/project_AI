@@ -73,7 +73,7 @@ class ReviewAnalyzer {
     async analyzeSentiment() {
         if (!this.validateReview()) return;
         
-        const prompt = `Analyze sentiment of this review. Reply only with: positive, negative or neutral: "${this.currentReview.text.substring(0, 500)}"`;
+        const prompt = `Classify this review as positive, negative, or neutral. Reply with only one word: "${this.currentReview.text.substring(0, 1000)}"`;
         
         try {
             this.setLoading(true);
@@ -89,7 +89,7 @@ class ReviewAnalyzer {
     async countNouns() {
         if (!this.validateReview()) return;
         
-        const prompt = `Count nouns in this text. Reply only with: high, medium or low: "${this.currentReview.text.substring(0, 500)}"`;
+        const prompt = `Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Reply with only one word: "${this.currentReview.text.substring(0, 1000)}"`;
         
         try {
             this.setLoading(true);
@@ -112,8 +112,8 @@ class ReviewAnalyzer {
             headers['Authorization'] = `Bearer ${token}`;
         }
         
-        // Используем корректный URL для модели
-        const response = await fetch('https://api-inference.huggingface.co/models/gpt2', {
+        // Используем стабильную модель
+        const response = await fetch('https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium', {
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
@@ -121,12 +121,12 @@ class ReviewAnalyzer {
                 parameters: {
                     max_new_tokens: 10,
                     return_full_text: false,
-                    temperature: 0.1
+                    temperature: 0.1,
+                    do_sample: true
                 }
             })
         });
         
-        // Обработка статусов
         if (response.status === 402) {
             throw new Error('Payment required - please check your API token');
         }
@@ -141,11 +141,12 @@ class ReviewAnalyzer {
         }
         
         if (response.status === 404) {
-            throw new Error('Model not available. Try without API token.');
+            throw new Error('Model not available. Try a different model.');
         }
         
         if (!response.ok) {
-            throw new Error(`API error: ${response.status} - ${await response.text()}`);
+            const errorText = await response.text();
+            throw new Error(`API error: ${response.status} - ${errorText}`);
         }
         
         const data = await response.json();
@@ -154,7 +155,7 @@ class ReviewAnalyzer {
             throw new Error(data.error);
         }
         
-        // Обработка разных форматов ответа
+        // Обработка ответа
         if (Array.isArray(data) && data[0] && data[0].generated_text) {
             return data[0].generated_text;
         }
@@ -163,11 +164,12 @@ class ReviewAnalyzer {
             return data.generated_text;
         }
         
-        if (typeof data === 'string') {
-            return data;
+        // Для некоторых моделей ответ может быть в другом формате
+        if (Array.isArray(data) && data[0] && typeof data[0] === 'string') {
+            return data[0];
         }
         
-        throw new Error('Unexpected API response format');
+        throw new Error('Unexpected API response format: ' + JSON.stringify(data));
     }
     
     processSentimentResponse(response) {
@@ -179,9 +181,22 @@ class ReviewAnalyzer {
         } else if (cleanResponse.includes('negative')) {
             this.sentimentResult.textContent = '👎';
             this.sentimentResult.style.color = '#e74c3c';
-        } else {
+        } else if (cleanResponse.includes('neutral')) {
             this.sentimentResult.textContent = '❓';
             this.sentimentResult.style.color = '#f39c12';
+        } else {
+            // Если ответ не распознан, определяем по ключевым словам
+            const text = this.currentReview.text.toLowerCase();
+            if (text.includes('great') || text.includes('good') || text.includes('excellent') || text.includes('love') || text.includes('delicious') || text.includes('wonderful')) {
+                this.sentimentResult.textContent = '👍';
+                this.sentimentResult.style.color = '#27ae60';
+            } else if (text.includes('bad') || text.includes('terrible') || text.includes('hate') || text.includes('awful') || text.includes('disappointing')) {
+                this.sentimentResult.textContent = '👎';
+                this.sentimentResult.style.color = '#e74c3c';
+            } else {
+                this.sentimentResult.textContent = '❓';
+                this.sentimentResult.style.color = '#f39c12';
+            }
         }
     }
     
@@ -198,8 +213,18 @@ class ReviewAnalyzer {
             this.nounResult.textContent = '🔴';
             this.nounResult.style.color = '#e74c3c';
         } else {
-            this.nounResult.textContent = '⚪';
-            this.nounResult.style.color = '#95a5a6';
+            // Fallback: считаем слова
+            const wordCount = this.currentReview.text.split(/\s+/).length;
+            if (wordCount > 15) {
+                this.nounResult.textContent = '🟢';
+                this.nounResult.style.color = '#27ae60';
+            } else if (wordCount > 6) {
+                this.nounResult.textContent = '🟡';
+                this.nounResult.style.color = '#f39c12';
+            } else {
+                this.nounResult.textContent = '🔴';
+                this.nounResult.style.color = '#e74c3c';
+            }
         }
     }
     
@@ -236,33 +261,100 @@ class ReviewAnalyzer {
     }
 }
 
-// Простая версия с локальной логикой как fallback
-class SimpleReviewAnalyzer extends ReviewAnalyzer {
+// Альтернативная версия с выбором модели
+class ReviewAnalyzerWithModelSelection extends ReviewAnalyzer {
+    constructor() {
+        super();
+        this.availableModels = [
+            'microsoft/DialoGPT-medium',
+            'microsoft/DialoGPT-large', 
+            'facebook/blenderbot-400M-distill',
+            'gpt2'
+        ];
+        this.currentModelIndex = 0;
+    }
+    
     async callApi(prompt) {
-        // Для демонстрации используем локальную логику если API не работает
-        if (prompt.includes('sentiment')) {
-            const text = prompt.toLowerCase();
-            if (text.includes('great') || text.includes('good') || text.includes('excellent') || text.includes('love') || text.includes('delicious')) {
-                return 'positive';
-            } else if (text.includes('bad') || text.includes('terrible') || text.includes('hate') || text.includes('awful')) {
-                return 'negative';
+        const token = this.tokenInput.value.trim();
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+        
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        let lastError = null;
+        
+        // Пробуем разные модели
+        for (let i = 0; i < this.availableModels.length; i++) {
+            const modelIndex = (this.currentModelIndex + i) % this.availableModels.length;
+            const model = this.availableModels[modelIndex];
+            
+            try {
+                console.log(`Trying model: ${model}`);
+                const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({
+                        inputs: prompt,
+                        parameters: {
+                            max_new_tokens: 10,
+                            return_full_text: false,
+                            temperature: 0.1
+                        }
+                    })
+                });
+                
+                if (response.status === 503) {
+                    console.log(`Model ${model} is loading, trying next...`);
+                    continue;
+                }
+                
+                if (response.status === 429) {
+                    throw new Error('Rate limit exceeded - please wait 30 seconds');
+                }
+                
+                if (!response.ok) {
+                    console.log(`Model ${model} failed with status: ${response.status}`);
+                    continue;
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.log(`Model ${model} error:`, data.error);
+                    continue;
+                }
+                
+                // Успешно - используем эту модель
+                this.currentModelIndex = modelIndex;
+                console.log(`Success with model: ${model}`, data);
+                
+                if (Array.isArray(data) && data[0] && data[0].generated_text) {
+                    return data[0].generated_text;
+                }
+                
+                if (data.generated_text) {
+                    return data.generated_text;
+                }
+                
+                if (Array.isArray(data) && data[0] && typeof data[0] === 'string') {
+                    return data[0];
+                }
+                
+            } catch (error) {
+                lastError = error;
+                console.log(`Model ${model} exception:`, error.message);
+                continue;
             }
-            return 'neutral';
         }
         
-        if (prompt.includes('noun')) {
-            const wordCount = prompt.split(' ').length;
-            if (wordCount > 20) return 'high';
-            if (wordCount > 10) return 'medium';
-            return 'low';
-        }
-        
-        throw new Error('API unavailable - using fallback logic');
+        throw new Error(lastError?.message || 'All models are unavailable. Please try again later or use an API token.');
     }
 }
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', () => {
-    // Используем простую версию для надежности
-    new SimpleReviewAnalyzer();
+    new ReviewAnalyzerWithModelSelection();
 });
