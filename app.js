@@ -1,193 +1,138 @@
-const API_URL = "https://api-inference.huggingface.co/models/google/gemma-7b-it";
 let reviews = [];
-let currentReview = '';
-
-document.addEventListener('DOMContentLoaded', function() {
-    loadReviews();
-    
-    document.getElementById('randomReview').addEventListener('click', selectRandomReview);
-    document.getElementById('analyzeSentiment').addEventListener('click', analyzeSentiment);
-    document.getElementById('countNouns').addEventListener('click', countNouns);
-});
+let currentReview = "";
+const reviewDiv = document.getElementById("review");
+const resultDiv = document.getElementById("result");
+const errorDiv = document.getElementById("error");
+const spinner = document.getElementById("spinner");
 
 async function loadReviews() {
-    try {
-        const response = await fetch('reviews_test.tsv');
-        const tsvData = await response.text();
-        
-        Papa.parse(tsvData, {
-            delimiter: '\t',
-            header: true,
-            complete: function(results) {
-                reviews = results.data.filter(review => review.text && review.text.trim());
-            },
-            error: function(error) {
-                showError('Failed to load reviews data');
-            }
-        });
-    } catch (error) {
-        showError('Failed to fetch reviews file');
-    }
+  const res = await fetch("reviews_test.tsv");
+  const text = await res.text();
+  const parsed = Papa.parse(text, { header: true, delimiter: "\t" });
+  reviews = parsed.data.filter(r => r.text);
 }
+loadReviews();
 
-function selectRandomReview() {
-    if (reviews.length === 0) {
-        showError('No reviews loaded yet');
-        return;
-    }
-    
-    const randomIndex = Math.floor(Math.random() * reviews.length);
-    currentReview = reviews[randomIndex].text;
-    document.getElementById('reviewDisplay').textContent = currentReview;
-    document.getElementById('resultCard').textContent = 'Results will appear here';
-    hideError();
-}
+document.getElementById("randomBtn").addEventListener("click", () => {
+  errorDiv.textContent = "";
+  if (!reviews.length) return;
+  const random = reviews[Math.floor(Math.random() * reviews.length)];
+  currentReview = random.text;
+  reviewDiv.textContent = currentReview;
+  resultDiv.innerHTML = `Sentiment: ❓ <br /> Noun Level: 🔴`;
+});
 
-async function analyzeSentiment() {
-    if (!currentReview) {
-        showError('Please select a review first');
-        return;
-    }
-    
-    const prompt = `Classify this review as positive, negative, or neutral: "${currentReview}"`;
-    const result = await callApi(prompt, currentReview);
-    
-    if (result) {
-        const sentiment = parseSentiment(result);
-        document.getElementById('resultCard').innerHTML = `
-            <strong>Sentiment:</strong> ${getSentimentEmoji(sentiment)} ${sentiment.toUpperCase()}
-        `;
-    }
-}
+document.getElementById("sentimentBtn").addEventListener("click", async () => {
+  if (!currentReview) return;
+  const prompt = `
+You are a precise sentiment classifier.
 
-async function countNouns() {
-    if (!currentReview) {
-        showError('Please select a review first');
-        return;
-    }
-    
-    const prompt = `Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6): "${currentReview}"`;
-    const result = await callApi(prompt, currentReview);
-    
-    if (result) {
-        const nounLevel = parseNounLevel(result);
-        document.getElementById('resultCard').innerHTML = `
-            <strong>Noun Count Level:</strong> ${getNounLevelEmoji(nounLevel)} ${nounLevel.toUpperCase()}
-        `;
-    }
-}
+TASK
+Read the customer review between triple quotes and decide the overall sentiment.
 
-async function callApi(prompt, text) {
-    const token = document.getElementById('apiToken').value.trim();
-    
-    if (!token) {
-        showError('Please enter a Hugging Face API token');
-        return null;
-    }
-    
-    showSpinner(true);
-    hideError();
-    
-    try {
-        const response = await fetch(API_URL, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                "inputs": prompt,
-                "parameters": {
-                    "max_new_tokens": 50,
-                    "temperature": 0.1
-                }
-            })
-        });
+LABELS
+- positive
+- negative
+- neutral (use when mixed/unclear)
 
-        if (response.status === 402) {
-            showError('Payment required - please check your API token');
-            return null;
-        }
-        
-        if (response.status === 429) {
-            showError('Rate limit exceeded - please wait and try again');
-            return null;
-        }
-        
-        if (!response.ok) {
-            showError(`API error: ${response.status}`);
-            return null;
-        }
+RULES
+- Judge overall tone and intent, not isolated words.
+- Ignore sarcasm unless clearly signaled.
+- Ignore star/emoji counts and metadata.
+- If uncertain, choose "neutral".
 
-        const data = await response.json();
-        
-        if (data.error) {
-            showError(`Model error: ${data.error}`);
-            return null;
-        }
-        
-        return data[0]?.generated_text || '';
+OUTPUT
+Return exactly one word in lowercase — positive, negative, or neutral — on the FIRST line. No punctuation or extra text.
 
-    } catch (error) {
-        showError(`Network error: ${error.message}`);
-        return null;
-    } finally {
-        showSpinner(false);
-    }
-}
+REVIEW
+"""${currentReview}"""
+`;
+  const sentiment = await callApi(prompt);
+  updateSentimentUI(sentiment);
+});
 
-function parseSentiment(response) {
-    const firstLine = response.split('\n')[0].toLowerCase();
-    
-    if (firstLine.includes('positive')) return 'positive';
-    if (firstLine.includes('negative')) return 'negative';
-    if (firstLine.includes('neutral')) return 'neutral';
-    
-    return 'neutral';
-}
+document.getElementById("nounBtn").addEventListener("click", async () => {
+  if (!currentReview) return;
+  const prompt = `
+You are a part-of-speech analyzer and counter.
 
-function parseNounLevel(response) {
-    const firstLine = response.split('\n')[0].toLowerCase();
-    
-    if (firstLine.includes('high')) return 'high';
-    if (firstLine.includes('medium')) return 'medium';
-    if (firstLine.includes('low')) return 'low';
-    
-    if (firstLine.match(/>\s*15/)) return 'high';
-    if (firstLine.match(/<\s*6/)) return 'low';
-    
-    return 'medium';
-}
+TASK
+From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level.
 
-function getSentimentEmoji(sentiment) {
-    switch (sentiment) {
-        case 'positive': return '👍';
-        case 'negative': return '👎';
-        default: return '❓';
-    }
-}
+COUNTING MECHANISM
+- Tokenize the text (treat hyphenated terms as one token).
+- Select ONLY nouns: common and proper, singular or plural (e.g., “product”, “bottles”, “Amazon”, “Dr. Oz”).
+- DO NOT count: pronouns, verbs, adjectives, adverbs, numbers, dates, interjections, symbols, or emojis.
+- Count all noun tokens (repeated nouns count each time they appear).
+- Ignore HTML, URLs, and IDs.
 
-function getNounLevelEmoji(level) {
-    switch (level) {
-        case 'high': return '🟢';
-        case 'medium': return '🟡';
-        default: return '🔴';
-    }
-}
+LEVEL RULES
+- high  → noun count > 15
+- medium → noun count 6–15
+- low   → noun count < 6
 
-function showSpinner(show) {
-    document.getElementById('spinner').style.display = show ? 'block' : 'none';
-    document.querySelectorAll('button').forEach(btn => {
-        btn.disabled = show;
+OUTPUT
+Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.
+
+REVIEW
+"""${currentReview}"""
+`;
+  const level = await callApi(prompt);
+  updateNounUI(level);
+});
+
+async function callApi(prompt) {
+  errorDiv.textContent = "";
+  spinner.style.display = "block";
+  const token = document.getElementById("token").value.trim();
+  try {
+    const res = await fetch("https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token && { Authorization: `Bearer ${token}` })
+      },
+      body: JSON.stringify({ inputs: prompt })
     });
+
+    if (res.status === 402) throw new Error("Payment required (402). Provide a valid HF token.");
+    if (res.status === 429) throw new Error("Rate limit exceeded. Try again later.");
+
+    const data = await res.json();
+    spinner.style.display = "none";
+
+    let text = "";
+    if (Array.isArray(data) && data[0]?.generated_text) {
+      text = data[0].generated_text.split("\n")[0].trim().toLowerCase();
+    } else if (data?.generated_text) {
+      text = data.generated_text.split("\n")[0].trim().toLowerCase();
+    } else if (data?.[0]?.generated_text) {
+      text = data[0].generated_text.trim().toLowerCase();
+    }
+    return text;
+  } catch (e) {
+    spinner.style.display = "none";
+    errorDiv.textContent = e.message;
+    return "";
+  }
 }
 
-function showError(message) {
-    const errorDiv = document.getElementById('errorDiv');
-    errorDiv.textContent = message;
-    errorDiv.style.display = 'block';
+function updateSentimentUI(sentiment) {
+  let emoji = "❓";
+  if (sentiment.includes("positive")) emoji = "👍";
+  if (sentiment.includes("negative")) emoji = "👎";
+  if (sentiment.includes("neutral")) emoji = "❓";
+
+  const existing = resultDiv.innerHTML.split("<br />")[1] || "Noun Level: 🔴";
+  resultDiv.innerHTML = `Sentiment: ${emoji} <br /> ${existing}`;
 }
 
-function hideError() {
-    document.getElementById('errorDiv').style.display = 'none';
+function updateNounUI(level) {
+  let emoji = "🔴";
+  if (level.includes("high")) emoji = "🟢";
+  if (level.includes("medium")) emoji = "🟡";
+  if (level.includes("low")) emoji = "🔴";
+
+  const existing = resultDiv.innerHTML.split("<br />")[0] || "Sentiment: ❓";
+  resultDiv.innerHTML = `${existing} <br /> Noun Level: ${emoji}`;
 }
