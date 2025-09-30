@@ -31,7 +31,7 @@ function showError(message) {
   errorDiv.style.display = message ? 'block' : 'none';
 }
 
-async function callApi(prompt, text, model) {
+async function callApi(prompt, text) {
   const apiToken = tokenInput.value;
   const headers = { 
     'Content-Type': 'application/json',
@@ -39,7 +39,7 @@ async function callApi(prompt, text, model) {
   };
 
   try {
-    const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+    const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ inputs: prompt + text })
@@ -64,15 +64,11 @@ async function callApi(prompt, text, model) {
   }
 }
 
-async function countNounsUsingPOS(text) {
-  const model = 'dbmdz/bert-large-cased-finetuned-conll03-english'; // Model for POS tagging
-  const response = await callApi('', text, model);
-
+async function countNouns(text) {
+  const response = await callApi('Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6): ', text);
   if (!response) return 0;
-
-  const posTags = response.split('\n').map(tag => tag.split('\t'));
-  const nouns = posTags.filter(tag => tag[1]?.startsWith('N')).length; // Counting nouns
-  return nouns;
+  const nounCount = response.split(' ').length;
+  return nounCount;
 }
 
 randomReviewBtn.addEventListener('click', () => {
@@ -93,7 +89,7 @@ sentimentBtn.addEventListener('click', async () => {
 
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
-  const response = await callApi('Classify this review as positive, negative, or neutral: ', reviewText, 'distilbert-base-uncased-finetuned-sst-2-english');
+  const response = await callApi('Classify this review as positive, negative, or neutral: ', reviewText);
   if (response) {
     sentimentElem.textContent = response === 'positive' ? '👍' : (response === 'negative' ? '👎' : '❓');
     showResult();
@@ -108,8 +104,9 @@ nounBtn.addEventListener('click', async () => {
 
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
-  const nounCount = await countNounsUsingPOS(reviewText);
-  nounLevelElem.textContent = nounCount > 15 ? '🟢' : (nounCount >= 6 ? '🟡' : '🔴');
+  const nounCount = await countNouns(reviewText);
+  const level = nounCount > 15 ? '🟢' : (nounCount >= 6 ? '🟡' : '🔴');
+  nounLevelElem.textContent = level;
   showResult();
 });
 
