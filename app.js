@@ -1,125 +1,201 @@
-let reviews = [];
-
-document.addEventListener("DOMContentLoaded", () => {
-  const randomBtn = document.getElementById("randomBtn");
-  const sentimentBtn = document.getElementById("sentimentBtn");
-  const nounBtn = document.getElementById("nounBtn");
-  const tokenInput = document.getElementById("token");
-  const reviewTextEl = document.getElementById("reviewText");
-  const sentimentResultEl = document.getElementById("sentimentResult");
-  const nounResultEl = document.getElementById("nounResult");
-  const errorDiv = document.getElementById("error");
-  const spinner = document.getElementById("spinner");
-
-  const showSpinner = () => spinner.classList.remove("hidden");
-  const hideSpinner = () => spinner.classList.add("hidden");
-  const showError = (msg) => {
-    errorDiv.textContent = msg;
-    errorDiv.classList.remove("hidden");
-  };
-  const clearError = () => {
-    errorDiv.classList.add("hidden");
-    errorDiv.textContent = "";
-  };
-  const resetResults = () => {
-    reviewTextEl.textContent = "";
-    sentimentResultEl.textContent = "";
-    nounResultEl.textContent = "";
-    clearError();
-  };
-
-  fetch("reviews_test.tsv")
-    .then((res) => res.ok ? res.text() : Promise.reject(`HTTP ${res.status}`))
-    .then((tsvData) => {
-      Papa.parse(tsvData, {
-        header: true,
-        delimiter: "\t",
-        skipEmptyLines: true,
-        complete: (results) => {
-          reviews = results.data.filter(row => row.text);
-        },
-        error: () => showError("Failed to parse TSV"),
-      });
-    })
-    .catch(() => showError("Failed to load reviews"));
-
-  randomBtn.addEventListener("click", () => {
-    resetResults();
-    if (!reviews.length) return showError("No reviews loaded");
-    const review = reviews[Math.floor(Math.random() * reviews.length)].text;
-    reviewTextEl.textContent = review;
-  });
-
-  const callApi = async (prompt, text) => {
-    const fullPrompt = `${prompt}\n\n"""${text}"`;
-    const headers = { "Content-Type": "application/json" };
-    const token = tokenInput?.value.trim();
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    try {
-      showSpinner();
-      clearError();
-      const res = await fetch(
-        "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct",
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ inputs: fullPrompt }),
-        }
-      );
-
-      hideSpinner();
-
-      if (res.status === 402 || res.status === 429) {
-        const err = await res.json();
-        showError(`Rate limited (${res.status}): ${err.error || "Try later"}`);
-        return null;
-      }
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const data = await res.json();
-      const output = Array.isArray(data) && data[0]?.generated_text
-        ? data[0].generated_text
-        : String(data);
-      return output.trim().split("\n")[0].toLowerCase();
-    } catch (err) {
-      hideSpinner();
-      showError("Request failed: " + err.message);
-      return null;
+class ReviewAnalyzer {
+    constructor() {
+        this.reviews = [];
+        this.currentReview = null;
+        this.initializeElements();
+        this.loadData();
+        this.attachEventListeners();
     }
-  };
 
-  sentimentBtn.addEventListener("click", async () => {
-    const text = reviewTextEl.textContent;
-    if (!text) return showError("Select a review first");
+    initializeElements() {
+        this.tokenInput = document.getElementById('token-input');
+        this.randomReviewBtn = document.getElementById('random-review');
+        this.analyzeSentimentBtn = document.getElementById('analyze-sentiment');
+        this.countNounsBtn = document.getElementById('count-nouns');
+        this.reviewText = document.getElementById('review-text');
+        this.analysisResult = document.getElementById('analysis-result');
+        this.errorDiv = document.getElementById('error');
+        this.spinner = document.getElementById('spinner');
+    }
 
-    const prompt =
-      "Read the customer review between triple quotes and decide the overall sentiment. Rules: - Judge overall tone and intent, not isolated words. - Ignore sarcasm unless clearly signaled. - Ignore star/emoji counts and metadata. - If uncertain, choose \"neutral\". Classify this review as positive, negative, or neutral:";
-    
-    const result = await callApi(prompt, text);
-    if (!result) return;
+    async loadData() {
+        try {
+            const response = await fetch('reviews_test.tsv');
+            const tsvData = await response.text();
+            
+            Papa.parse(tsvData, {
+                header: true,
+                delimiter: '\t',
+                complete: (results) => {
+                    this.reviews = results.data.filter(review => review.text && review.text.trim());
+                },
+                error: (error) => {
+                    this.showError('Failed to load review data');
+                }
+            });
+        } catch (error) {
+            this.showError('Failed to fetch review data file');
+        }
+    }
 
-    const emoji = result.includes("positive") ? "👍" :
-                  result.includes("negative") ? "👎" : "❓";
-    
-    sentimentResultEl.textContent = `Sentiment: ${emoji}`;
-  });
+    attachEventListeners() {
+        this.randomReviewBtn.addEventListener('click', () => this.selectRandomReview());
+        this.analyzeSentimentBtn.addEventListener('click', () => this.analyzeSentiment());
+        this.countNounsBtn.addEventListener('click', () => this.countNouns());
+    }
 
-  nounBtn.addEventListener("click", async () => {
-    const text = reviewTextEl.textContent;
-    if (!text) return showError("Select a review first");
+    selectRandomReview() {
+        if (this.reviews.length === 0) {
+            this.showError('No reviews loaded yet');
+            return;
+        }
+        
+        this.clearResults();
+        const randomIndex = Math.floor(Math.random() * this.reviews.length);
+        this.currentReview = this.reviews[randomIndex];
+        this.reviewText.textContent = this.currentReview.text;
+    }
 
-    const prompt =
-      "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level. - Tokenize the text (treat hyphenated terms as one token). - Select ONLY nouns: common and proper, singular or plural (e.g., “product”, “bottles”, “Amazon”, “Dr. Oz”). - DO NOT count: pronouns, verbs, adjectives, adverbs, numbers, dates, interjections, symbols, or emojis. - Count all noun tokens (repeated nouns count each time they appear). - Ignore HTML, URLs, and IDs. Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.";
-    
-    const result = await callApi(prompt, text);
-    if (!result) return;
+    async analyzeSentiment() {
+        if (!this.validateReview()) return;
+        
+        const prompt = `Classify this review as positive, negative, or neutral: \"\"\"${this.currentReview.text}\"\"\"`;
+        await this.callApi(prompt, 'sentiment');
+    }
 
-    const level = result.includes("high") ? "High" :
-                  result.includes("medium") ? "Medium" : "Low";
-    const emoji = level === "High" ? "🟢" : level === "Medium" ? "🟡" : "🔴";
+    async countNouns() {
+        if (!this.validateReview()) return;
+        
+        const prompt = `Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). \"\"\"${this.currentReview.text}\"\"\"`;
+        await this.callApi(prompt, 'nouns');
+    }
 
-    nounResultEl.textContent = `Noun count level: ${emoji}(${level})`;
-  });
+    async callApi(prompt, analysisType) {
+        this.setLoading(true);
+        this.clearError();
+
+        try {
+            const token = this.tokenInput.value.trim();
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ inputs: prompt })
+            });
+
+            if (response.status === 402 || response.status === 429) {
+                this.showError('API rate limit exceeded. Please try again later or use your own API token.');
+                return;
+            }
+
+            if (!response.ok) {
+                this.showError(`API request failed: ${response.status} ${response.statusText}`);
+                return;
+            }
+
+            const data = await response.json();
+            this.processApiResponse(data, analysisType);
+
+        } catch (error) {
+            this.showError('Network error: Failed to connect to API');
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    processApiResponse(data, analysisType) {
+        if (!data || !data[0] || !data[0].generated_text) {
+            this.showError('Invalid response from API');
+            return;
+        }
+
+        const responseText = data[0].generated_text.toLowerCase().trim();
+        const firstLine = responseText.split('\n')[0].trim();
+
+        if (analysisType === 'sentiment') {
+            this.displaySentiment(firstLine);
+        } else if (analysisType === 'nouns') {
+            this.displayNounCount(firstLine);
+        }
+    }
+
+    displaySentiment(sentimentText) {
+        let emoji = '❓';
+        let label = 'Neutral';
+
+        if (sentimentText.includes('positive')) {
+            emoji = '👍';
+            label = 'Positive';
+        } else if (sentimentText.includes('negative')) {
+            emoji = '👎';
+            label = 'Negative';
+        }
+
+        this.analysisResult.innerHTML = `
+            <div class="result-item">
+                <span>Sentiment:</span>
+                <span>${emoji} ${label}</span>
+            </div>
+        `;
+    }
+
+    displayNounCount(nounText) {
+        let emoji = '🔴';
+        let level = 'Low';
+
+        if (nounText.includes('high')) {
+            emoji = '🟢';
+            level = 'High';
+        } else if (nounText.includes('medium')) {
+            emoji = '🟡';
+            level = 'Medium';
+        }
+
+        this.analysisResult.innerHTML = `
+            <div class="result-item">
+                <span>Noun Count:</span>
+                <span>${emoji} ${level}</span>
+            </div>
+        `;
+    }
+
+    validateReview() {
+        if (!this.currentReview) {
+            this.showError('Please select a random review first');
+            return false;
+        }
+        return true;
+    }
+
+    setLoading(loading) {
+        this.spinner.classList.toggle('active', loading);
+        this.randomReviewBtn.disabled = loading;
+        this.analyzeSentimentBtn.disabled = loading;
+        this.countNounsBtn.disabled = loading;
+    }
+
+    showError(message) {
+        this.errorDiv.textContent = message;
+        this.errorDiv.classList.add('active');
+    }
+
+    clearError() {
+        this.errorDiv.classList.remove('active');
+    }
+
+    clearResults() {
+        this.analysisResult.innerHTML = '';
+        this.clearError();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    new ReviewAnalyzer();
 });
