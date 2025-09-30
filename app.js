@@ -67,7 +67,7 @@ class ReviewAnalyzer {
     async analyzeSentiment() {
         if (!this.validateReview()) return;
         
-        const prompt = `Classify this review as positive, negative, or neutral: \"\"\"${this.currentReview.text}\"\"\"`;
+        const prompt = `Classify this review as positive, negative, or neutral: "${this.currentReview.text}"`;
         
         try {
             this.setLoading(true);
@@ -83,7 +83,7 @@ class ReviewAnalyzer {
     async countNouns() {
         if (!this.validateReview()) return;
         
-        const prompt = `Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). \"\"\"${this.currentReview.text}\"\"\"`;
+        const prompt = `Count nouns in this review. Reply only: high, medium or low: "${this.currentReview.text}"`;
         
         try {
             this.setLoading(true);
@@ -106,13 +106,14 @@ class ReviewAnalyzer {
             headers['Authorization'] = `Bearer ${token}`;
         }
         
-        const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct', {
+        // Используем рабочую модель
+        const response = await fetch('https://api-inference.huggingface.co/models/gpt2', {
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
                 inputs: prompt,
                 parameters: {
-                    max_new_tokens: 50,
+                    max_new_tokens: 20,
                     return_full_text: false
                 }
             })
@@ -126,6 +127,15 @@ class ReviewAnalyzer {
             throw new Error('Rate limit exceeded - please wait and try again');
         }
         
+        if (response.status === 404) {
+            throw new Error('Model not found. Try again later.');
+        }
+        
+        if (response.status === 503) {
+            const retryAfter = response.headers.get('Retry-After') || 10;
+            throw new Error(`Model is loading. Wait ${retryAfter} seconds and try again.`);
+        }
+        
         if (!response.ok) {
             throw new Error(`API error: ${response.status} ${response.statusText}`);
         }
@@ -136,15 +146,20 @@ class ReviewAnalyzer {
             throw new Error(data.error);
         }
         
-        if (!data || !data[0] || !data[0].generated_text) {
-            throw new Error('Invalid response from API');
+        // Обработка разных форматов ответа
+        if (data[0] && data[0].generated_text) {
+            return data[0].generated_text;
         }
         
-        return data[0].generated_text;
+        if (data.generated_text) {
+            return data.generated_text;
+        }
+        
+        throw new Error('Invalid response from API');
     }
     
     processSentimentResponse(response) {
-        const firstLine = response.split('\n')[0].toLowerCase().trim();
+        const firstLine = response.toLowerCase().trim();
         
         if (firstLine.includes('positive')) {
             this.sentimentResult.textContent = '👍';
@@ -159,7 +174,7 @@ class ReviewAnalyzer {
     }
     
     processNounResponse(response) {
-        const firstLine = response.split('\n')[0].toLowerCase().trim();
+        const firstLine = response.toLowerCase().trim();
         
         if (firstLine.includes('high')) {
             this.nounResult.textContent = '🟢';
@@ -171,6 +186,7 @@ class ReviewAnalyzer {
             this.nounResult.textContent = '🔴';
             this.nounResult.style.color = '#e74c3c';
         } else {
+            // Если ответ не распознан, показываем серый кружок
             this.nounResult.textContent = '⚪';
             this.nounResult.style.color = '#95a5a6';
         }
@@ -208,6 +224,88 @@ class ReviewAnalyzer {
     }
 }
 
+// Альтернативная версия с fallback моделями
+class ReviewAnalyzerWithFallback extends ReviewAnalyzer {
+    constructor() {
+        super();
+        this.models = [
+            'models/gpt2',
+            'models/microsoft/DialoGPT-medium',
+            'models/facebook/blenderbot-400M-distill'
+        ];
+        this.currentModelIndex = 0;
+    }
+    
+    async callApi(prompt, text) {
+        const token = this.tokenInput.value.trim();
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+        
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        let lastError = null;
+        
+        // Пробуем все модели по очереди
+        for (let i = 0; i < this.models.length; i++) {
+            const modelIndex = (this.currentModelIndex + i) % this.models.length;
+            const model = this.models[modelIndex];
+            
+            try {
+                const response = await fetch(`https://api-inference.huggingface.co/${model}`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({
+                        inputs: prompt,
+                        parameters: {
+                            max_new_tokens: 20,
+                            return_full_text: false
+                        }
+                    })
+                });
+                
+                if (response.status === 503) {
+                    continue; // Пробуем следующую модель
+                }
+                
+                if (response.status === 429) {
+                    throw new Error('Rate limit exceeded - please wait and try again');
+                }
+                
+                if (!response.ok) {
+                    continue; // Пробуем следующую модель
+                }
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    continue; // Пробуем следующую модель
+                }
+                
+                // Успешно - запоминаем эту модель
+                this.currentModelIndex = modelIndex;
+                
+                if (data[0] && data[0].generated_text) {
+                    return data[0].generated_text;
+                }
+                
+                if (data.generated_text) {
+                    return data.generated_text;
+                }
+                
+            } catch (error) {
+                lastError = error;
+                continue; // Пробуем следующую модель
+            }
+        }
+        
+        throw new Error(lastError?.message || 'All models are unavailable. Try again later.');
+    }
+}
+
+// Инициализация при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
-    new ReviewAnalyzer();
+    new ReviewAnalyzerWithFallback();
 });
