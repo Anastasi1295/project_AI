@@ -31,7 +31,7 @@ function showError(message) {
   errorDiv.style.display = message ? 'block' : 'none';
 }
 
-async function callApi(prompt, text) {
+async function callApi(prompt, text, model) {
   const apiToken = tokenInput.value;
   const headers = { 
     'Content-Type': 'application/json',
@@ -39,7 +39,7 @@ async function callApi(prompt, text) {
   };
 
   try {
-    const response = await fetch('https://api-inference.huggingface.co/models/EleutherAI/gpt-j-6B', {
+    const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ inputs: prompt + text })
@@ -64,9 +64,15 @@ async function callApi(prompt, text) {
   }
 }
 
-function countNouns(text) {
-  const nouns = text.match(/\b(?:[A-Za-z-]+(?:s|es|ies)?|[A-Za-z]+(?:\'s)?)\b/g) || [];
-  return nouns.filter(word => !['I', 'you', 'he', 'she', 'it', 'we', 'they', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did'].includes(word.toLowerCase())).length;
+async function countNounsUsingPOS(text) {
+  const model = 'dbmdz/bert-large-cased-finetuned-conll03-english'; // Model for POS tagging
+  const response = await callApi('', text, model);
+
+  if (!response) return 0;
+
+  const posTags = response.split('\n').map(tag => tag.split('\t'));
+  const nouns = posTags.filter(tag => tag[1]?.startsWith('N')).length; // Counting nouns
+  return nouns;
 }
 
 randomReviewBtn.addEventListener('click', () => {
@@ -87,7 +93,7 @@ sentimentBtn.addEventListener('click', async () => {
 
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
-  const response = await callApi('Classify this review as positive, negative, or neutral: ', reviewText);
+  const response = await callApi('Classify this review as positive, negative, or neutral: ', reviewText, 'distilbert-base-uncased-finetuned-sst-2-english');
   if (response) {
     sentimentElem.textContent = response === 'positive' ? '👍' : (response === 'negative' ? '👎' : '❓');
     showResult();
@@ -102,12 +108,9 @@ nounBtn.addEventListener('click', async () => {
 
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
-  const nounCount = countNouns(reviewText);
-  const response = await callApi('Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6): ', reviewText);
-  if (response) {
-    nounLevelElem.textContent = nounCount > 15 ? '🟢' : (nounCount >= 6 ? '🟡' : '🔴');
-    showResult();
-  }
+  const nounCount = await countNounsUsingPOS(reviewText);
+  nounLevelElem.textContent = nounCount > 15 ? '🟢' : (nounCount >= 6 ? '🟡' : '🔴');
+  showResult();
 });
 
 function showResult() {
