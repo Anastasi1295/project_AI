@@ -63,11 +63,21 @@ function countNouns(text) {
 }
 
 randomReviewBtn.addEventListener('click', () => {
+  if (reviews.length === 0) {
+    showError('Reviews not loaded yet!');
+    return;
+  }
+
   const randomReview = reviews[Math.floor(Math.random() * reviews.length)];
   showResult(randomReview.text);
 });
 
 sentimentBtn.addEventListener('click', async () => {
+  if (reviews.length === 0) {
+    showError('Reviews not loaded yet!');
+    return;
+  }
+
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
   const response = await callApi('Classify this review as positive, negative, or neutral: ', reviewText);
@@ -78,6 +88,11 @@ sentimentBtn.addEventListener('click', async () => {
 });
 
 nounBtn.addEventListener('click', async () => {
+  if (reviews.length === 0) {
+    showError('Reviews not loaded yet!');
+    return;
+  }
+
   const reviewText = reviews[Math.floor(Math.random() * reviews.length)].text;
   showSpinner(true);
   const nounCount = countNouns(reviewText);
