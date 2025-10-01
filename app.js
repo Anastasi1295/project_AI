@@ -31,26 +31,21 @@ function mapNounIcon(lbl) {
   return ["—", "warn"];
 }
 
-// Извлекает первую строку, приводит к нижнему регистру
 function firstLineLower(text) {
   return (text || "").split(/\r?\n/)[0].trim().toLowerCase();
 }
 
-// Основная модель (вместо нерабочего falcon-7b-instruct)
+// ✅ ЕДИНСТВЕННАЯ модель — zephyr-7b-beta (falcon и qwen2.5 недоступны)
 const MODEL_ID = "HuggingFaceH4/zephyr-7b-beta";
 
-// Получение Bearer-токена, если указан
 function getAuthHeader() {
-  const tokenEl = S.token;
-  const token = tokenEl?.value.trim();
+  const token = S.token?.value.trim();
   return token ? `Bearer ${token.replace(/\s+/g, "")}` : null;
 }
 
-// Универсальная функция вызова модели
+// ✅ Единая функция callApi(prompt, text)
 async function callApi(prompt, text) {
   const fullPrompt = `${prompt}
-  
-Review:
 \`\`\`
 ${text}
 \`\`\``;
@@ -59,7 +54,9 @@ ${text}
     inputs: fullPrompt,
     parameters: {
       max_new_tokens: 32,
-      temperature: 0,
+      temperature: 0.1,
+      top_p: 0.9,
+      do_sample: false,
       return_full_text: false
     },
     options: {
@@ -82,24 +79,22 @@ ${text}
     });
 
     if (r.status === 401) throw new Error("401 Unauthorized – проверьте токен");
-    if (r.status === 402) throw new Error("402 Payment required – требуется платная подписка");
+    if (r.status === 402) throw new Error("402 Payment required – нужна Pro-подписка или endpoint");
     if (r.status === 429) throw new Error("429 Rate limited – слишком много запросов");
+    if (r.status === 503) throw new Error("503 Model is loading – подождите, модель запускается");
     if (!r.ok) {
       const errText = await r.text();
       throw new Error(`Ошибка ${r.status}: ${errText.slice(0, 100)}`);
     }
 
     const data = await r.json();
-    return Array.isArray(data) && data[0]?.generated_text
-      ? data[0].generated_text
-      : (data?.generated_text || "");
+    return data?.generated_text || (Array.isArray(data) && data[0]?.generated_text) || "";
   } catch (error) {
-    // Проброс ошибки для обработки в UI
     throw error;
   }
 }
 
-// Анализ тональности по правилам из промта
+// ✅ Анализ тональности по правилам из промта
 async function onSent() {
   const text = S.textEl.textContent.trim();
   if (!text) {
@@ -118,10 +113,9 @@ Return only one word: positive, negative, or neutral.`;
     const raw = await callApi(prompt, text);
     const resp = firstLineLower(raw);
 
-    let label = "neutral"; // default
-    if (resp.includes("positive")) label = "positive";
-    else if (resp.includes("negative")) label = "negative";
-    else if (resp.includes("neutral")) label = "neutral";
+    const label = resp.includes("positive") ? "positive" :
+                  resp.includes("negative") ? "negative" :
+                  resp.includes("neutral") ? "neutral" : "neutral";
 
     const [ico, cls] = mapSentIcon(label);
     S.sent.querySelector("span").textContent = `Sentiment: ${ico}`;
@@ -133,7 +127,7 @@ Return only one word: positive, negative, or neutral.`;
   }
 }
 
-// Подсчёт существительных по строгим правилам
+// ✅ Подсчёт существительных по строгим правилам
 async function onNouns() {
   const text = S.textEl.textContent.trim();
   if (!text) {
@@ -157,10 +151,9 @@ Return exactly one word in lowercase — high, medium, or low — on the FIRST l
     const raw = await callApi(prompt, text);
     const resp = firstLineLower(raw);
 
-    let level = "medium"; // fallback
-    if (resp.startsWith("high") || /\bhigh\b/.test(resp)) level = "high";
-    else if (resp.startsWith("medium") || /\bmedium\b/.test(resp)) level = "medium";
-    else if (resp.startsWith("low") || /\blow\b/.test(resp)) level = "low";
+    const level = resp.startsWith("high") ? "high" :
+                  resp.startsWith("medium") ? "medium" :
+                  resp.startsWith("low") ? "low" : "medium";
 
     const [ico, cls] = mapNounIcon(level);
     S.nouns.querySelector("span").textContent = `Noun level: ${ico}`;
@@ -187,7 +180,7 @@ function rand() {
   setErr("");
 }
 
-// Загрузка TSV через Papa Parse
+// Загрузка TSV
 function loadTSV() {
   return new Promise((resolve, reject) => {
     Papa.parse("./reviews_test.tsv", {
@@ -196,16 +189,15 @@ function loadTSV() {
       header: true,
       skipEmptyLines: true,
       complete: (res) => {
-        const rows = (res.data || []).filter(r => r.text);
-        if (rows.length === 0) return reject(new Error("No reviews found in TSV"));
-        resolve(rows);
+        const rows = (res.data || []).filter(r => r?.text);
+        resolve(rows.length ? rows : reject(new Error("No valid reviews found")));
       },
-      error: (err) => reject(new Error(`TSV load failed: ${err}`))
+      error: (err) => reject(new Error(`TSV load failed: ${err.message}`))
     });
   });
 }
 
-// Инициализация при загрузке DOM
+// Инициализация
 function init() {
   S.textEl = document.getElementById("text");
   S.err = document.getElementById("err");
@@ -226,12 +218,9 @@ function init() {
       S.reviews = reviews;
       rand();
     })
-    .catch(err => {
-      setErr("Failed to load reviews: " + err.message);
-    });
+    .catch(err => setErr("Failed to load TSV: " + err.message));
 }
 
-// Запуск
 document.readyState === "loading"
   ? document.addEventListener("DOMContentLoaded", init)
   : init();
