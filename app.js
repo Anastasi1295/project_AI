@@ -39,7 +39,7 @@ function getAuthHeader() {
   return token ? `Bearer ${token.replace(/\s+/g, "")}` : null;
 }
 
-// ЛОКАЛЬНЫЙ ПОДСЧЁТ СУЩЕСТВИТЕЛЬНЫХ — ТОЧНЫЙ И ПОЛНЫЙ
+// УЛУЧШЕННЫЙ ЛОКАЛЬНЫЙ ПОДСЧЁТ СУЩЕСТВИТЕЛЬНЫХ
 function countNounsLocally(text) {
   // Очистка текста
   const clean = text
@@ -47,30 +47,69 @@ function countNounsLocally(text) {
     .replace(/<[^>]+>/g, '')                             // HTML
     .replace(/\b[A-Z]{2,}\d{4,}[A-Z\d]*\b/g, '')         // IDs: B001E5DZTS
     .replace(/[^\w\s.'’-]/g, ' ')                        // Только буквы, пробелы, дефисы
-    .replace(/\.{2,}/g, ' ');
+    .replace(/\.{2,}/g, ' ')
+    .replace(/\s+/g, ' ')                                // Нормализация пробелов
+    .trim();
 
   // Извлечение слов
   const words = clean.match(/\b[a-zA-Z][a-zA-Z'\u2019-]*[a-zA-Z]|\b[a-zA-Z]\b/g) || [];
 
-  // Список общих существительных
+  // Расширенный список общих существительных для отзывов о продуктах
   const commonNouns = new Set([
     'product', 'bottle', 'bottles', 'review', 'water', 'taste', 'flavor', 'flavors',
     'daughter', 'child', 'baby', 'formula', 'goat', 'milk', 'coconut', 'drink',
     'package', 'shipping', 'price', 'value', 'amazon', 'customer', 'service',
     'company', 'brand', 'name', 'website', 'order', 'shipment', 'box', 'can',
-    'container', 'label', 'recommendation', 'friend', 'doctor'
+    'container', 'label', 'recommendation', 'friend', 'doctor', 'item', 'quality',
+    'delivery', 'time', 'day', 'week', 'month', 'year', 'size', 'color', 'smell',
+    'odor', 'texture', 'consistency', 'result', 'effect', 'benefit', 'problem',
+    'issue', 'solution', 'alternative', 'option', 'choice', 'selection', 'store',
+    'seller', 'retailer', 'market', 'shop', 'online', 'site', 'web', 'page'
   ]);
+
+  // Расширенные списки исключений
+  const pronouns = new Set(['i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them']);
+  const possessives = new Set(['my', 'your', 'his', 'her', 'its', 'our', 'their', 'mine', 'yours', 'hers', 'ours', 'theirs']);
+  const verbs = new Set([
+    'is', 'are', 'was', 'were', 'have', 'has', 'had', 'do', 'does', 'did', 
+    'can', 'could', 'will', 'would', 'should', 'may', 'might', 'must', 'shall',
+    'get', 'got', 'getting', 'give', 'gave', 'given', 'take', 'took', 'taken',
+    'make', 'made', 'making', 'go', 'went', 'gone', 'see', 'saw', 'seen',
+    'know', 'knew', 'known', 'think', 'thought', 'say', 'said', 'saying',
+    'like', 'liked', 'love', 'loved', 'hate', 'hated', 'want', 'wanted'
+  ]);
+  const adverbs = new Set([
+    'very', 'really', 'just', 'only', 'too', 'so', 'not', 'well', 'also', 
+    'even', 'back', 'now', 'then', 'here', 'there', 'always', 'never', 
+    'sometimes', 'often', 'usually', 'quite', 'rather', 'almost', 'enough'
+  ]);
+  const adjectives = new Set([
+    'good', 'bad', 'better', 'best', 'great', 'nice', 'excellent', 'poor', 
+    'big', 'small', 'large', 'huge', 'tiny', 'expensive', 'cheap', 'affordable',
+    'delicious', 'terrible', 'awful', 'wonderful', 'amazing', 'horrible',
+    'easy', 'difficult', 'hard', 'simple', 'complex', 'fast', 'slow',
+    'happy', 'sad', 'angry', 'pleased', 'disappointed', 'satisfied'
+  ]);
+  const conjunctions = new Set(['and', 'or', 'but', 'because', 'if', 'when', 'while', 'although']);
+  const prepositions = new Set(['in', 'on', 'at', 'by', 'with', 'for', 'from', 'to', 'of', 'about']);
 
   let count = 0;
 
   for (let i = 0; i < words.length; i++) {
     const word = words[i].toLowerCase();
+    const originalWord = words[i];
 
-    // Исключаем местоимения, глаголы, наречия
-    if (['i', 'you', 'he', 'she', 'it', 'we', 'they'].includes(word)) continue;
-    if (['my', 'your', 'his', 'her', 'our', 'their'].includes(word)) continue;
-    if (['is', 'are', 'was', 'were', 'have', 'has', 'had', 'do', 'does', 'did'].includes(word)) continue;
-    if (['very', 'really', 'just', 'only', 'too', 'so', 'not', 'well'].includes(word)) continue;
+    // Пропускаем короткие слова (меньше 3 букв), которые не в списке существительных
+    if (word.length < 3 && !commonNouns.has(word)) {
+      continue;
+    }
+
+    // Пропускаем служебные слова
+    if (pronouns.has(word) || possessives.has(word) || verbs.has(word) || 
+        adverbs.has(word) || adjectives.has(word) || conjunctions.has(word) || 
+        prepositions.has(word)) {
+      continue;
+    }
 
     // Проверяем общие существительные
     if (commonNouns.has(word)) {
@@ -78,20 +117,46 @@ function countNounsLocally(text) {
       continue;
     }
 
-    // Dr. Oz → считаем "Dr" и "Oz" как существительные
+    // Dr. Oz и подобные конструкции
     if (word === 'dr' && i + 1 < words.length && /^[A-Z]/.test(words[i+1])) {
-      count++; // Dr
+      count++;
       continue;
     }
 
-    // Слово с заглавной буквы не в начале предложения → имя собственное
-    if (/^[A-Z][a-z]+$/.test(words[i]) && i > 0) {
-      const prev = words[i - 1];
-      const endsWithPunct = ['.', '!', '?'].some(p => prev?.endsWith(p));
-      if (!endsWithPunct) {
+    // Слова с типичными суффиксами существительных
+    const nounSuffixes = ['tion', 'sion', 'ment', 'ness', 'ity', 'ance', 'ence', 'ship', 'age', 'dom', 'hood', 'ism', 'ist'];
+    if (nounSuffixes.some(suffix => word.endsWith(suffix)) && word.length > 4) {
+      count++;
+      continue;
+    }
+
+    // Множественное число (окончание s/es)
+    if ((word.endsWith('s') || word.endsWith('es')) && word.length > 3) {
+      const singular = word.replace(/e?s$/, '');
+      if (commonNouns.has(singular) || 
+          nounSuffixes.some(suffix => singular.endsWith(suffix))) {
         count++;
         continue;
       }
+    }
+
+    // Консервативная проверка слов с заглавной буквы (имена собственные)
+    if (/^[A-Z][a-z]+$/.test(originalWord) && word.length >= 4) {
+      // Считаем существительным только если это не начало предложения
+      if (i > 0) {
+        // Простая проверка на начало предложения
+        const sentenceStart = /[.!?]\s*$/.test(clean.substring(0, clean.indexOf(originalWord)));
+        if (!sentenceStart) {
+          count++;
+          continue;
+        }
+      }
+    }
+
+    // Последний шанс: слова, которые выглядят как существительные по длине и структуре
+    if (word.length >= 5 && /^[a-z]+$/.test(word) && 
+        !verbs.has(word) && !adjectives.has(word) && !adverbs.has(word)) {
+      count++;
     }
   }
 
@@ -159,7 +224,7 @@ async function onNouns() {
 
   // ТОЧНЫЙ ЛОКАЛЬНЫЙ ПОДСЧЁТ
   const count = countNounsLocally(txt);
-  const level = getNounLevel(count);  // Здесь 6 точно даёт medium
+  const level = getNounLevel(count);
 
   const [ico, cls] = mapNounIcon(level);
   S.nouns.querySelector("span").textContent = `Noun level: ${ico} (${count})`;
