@@ -1,8 +1,6 @@
-// Глобальный объект состояния для хранения DOM-элементов и данных
 const S = {};
 
 // Управление индикатором загрузки и блокировкой кнопок
-// Показывает спиннер и отключает все кнопки, если v = true
 function setSpin(v) {
   S.spin.style.display = v ? "inline-flex" : "none";
   S.btnRandom.disabled = v;
@@ -11,7 +9,6 @@ function setSpin(v) {
 }
 
 // Отображение/скрытие сообщений об ошибках
-// Если текст ошибки пустой — скрывает блок, иначе показывает
 function setErr(t) {
   if (!t) {
     S.err.style.display = "none";
@@ -22,8 +19,7 @@ function setErr(t) {
   S.err.textContent = t;
 }
 
-// Маппинг результата тональности в эмодзи, цветовой класс и иконку Font Awesome
-// Возвращает массив: [эмодзи, CSS-класс, иконка]
+// Маппинг результата тональности
 function mapSentIcon(lbl) {
   if (lbl === "positive") return ["👍", "good", "fa-regular fa-face-smile"];
   if (lbl === "negative") return ["👎", "bad", "fa-regular fa-face-frown"];
@@ -31,8 +27,7 @@ function mapSentIcon(lbl) {
   return ["❓", "warn", "fa-regular fa-face-meh"];
 }
 
-// Маппинг уровня количества существительных в эмодзи и цветовой класс
-// Используется для визуального отображения плотности существительных
+// Маппинг уровня существительных
 function mapNounIcon(lbl) {
   if (lbl === "high" || lbl === "many") return ["🟢", "good"];
   if (lbl === "medium") return ["🟡", "warn"];
@@ -40,24 +35,21 @@ function mapNounIcon(lbl) {
   return ["—", "warn"];
 }
 
-// Извлекает первую строку текста, приводит к нижнему регистру и удаляет пробелы по краям
-// Используется для нормализации ответов моделей
+// Извлечение первой строки и приведение к нижнему регистру
 function firstLineLower(t) {
   return (t || "").split(/\r?\n/)[0].toLowerCase().trim();
 }
 
-// Нормализует сырой ответ модели в одну из трёх категорий: positive / negative / neutral
-// Поддерживает мультиязычные варианты и опечатки
+// Нормализация ответа модели в positive/negative/neutral
 function normalizeResp(raw) {
   let s = firstLineLower(raw).replace(/^[^a-zа-яё]+/i, "");
   if (/positive|positif|положит|хорош|good/.test(s)) return "positive";
   if (/negative|negatif|отрицат|плох|bad/.test(s)) return "negative";
   if (/neutral|нейтр/.test(s)) return "neutral";
-  return s; // возвращаем как есть, если не удалось распознать
+  return s;
 }
 
-// Нормализует ответ модели в уровень количества существительных: high / medium / low
-// Учитывает числовые диапазоны и синонимы на английском и русском
+// Нормализация уровня существительных
 function normalizeLevel(raw) {
   let s = firstLineLower(raw);
   if (/\b(high|many|>?\s*15|\bmore than 15\b|более\s*15|много)\b/.test(s)) return "high";
@@ -66,36 +58,29 @@ function normalizeLevel(raw) {
   return s;
 }
 
-// Список резервных генеративных моделей (если специализированные недоступны)
+// Модели
 const TEXTGEN_MODELS = [
   "HuggingFaceH4/smol-llama-3.2-1.7B-instruct",
   "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 ];
-
-// Основная модель для анализа тональности отзывов (мультиязычная)
 const SENTIMENT_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment";
-
-// Модели для POS-теггинга (определение частей речи, включая существительные)
 const POS_MODELS = [
   "vblagoje/bert-english-uncased-finetuned-pos",
   "vblagoje/bert-english-cased-finetuned-pos"
 ];
 
-// Активные модели (отслеживаются для отображения в title элементов)
 let ACTIVE_TEXTGEN_MODEL = TEXTGEN_MODELS[0];
 let ACTIVE_SENT_MODEL = SENTIMENT_MODEL;
 let ACTIVE_POS_MODEL = POS_MODELS[0];
 
-// Получает заголовок авторизации, если токен указан в поле ввода
-// Удаляет лишние пробелы и переносы
+// Получение Bearer-токена
 function getAuthHeader() {
   const el = S.token;
   const tok = el && el.value ? el.value.trim().replace(/[\s\r\n\t]+/g, "") : "";
   return tok ? ("Bearer " + tok) : null;
 }
 
-// Универсальный запрос к Hugging Face Inference API
-// Обрабатывает ошибки: 401, 402, 429, 404 и прочие
+// Запрос к Hugging Face API
 async function hfRequest(modelId, body) {
   const url = `https://api-inference.huggingface.co/models/${modelId}`;
   const headers = {
@@ -124,32 +109,26 @@ async function hfRequest(modelId, body) {
   return r.json();
 }
 
-// Анализ тональности: сначала использует специализированную модель,
-// при ошибке — резервно обращается к генеративной
+// Анализ тональности
 async function callSentimentHF(text) {
   const data = await hfRequest(SENTIMENT_MODEL, {
     inputs: text,
     options: { wait_for_model: true, use_cache: false }
   });
-  // Обработка формата ответа (возможны разные структуры)
   const arr = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
-  // Находим метку с максимальным score
   let best = arr.reduce((a, b) => (a && a.score > b.score) ? a : b, null) || arr[0];
   if (!best) throw new Error("Empty response from sentiment model");
   const lbl = best.label.toLowerCase();
-  // Преобразуем метку в наш формат
   if (/pos/.test(lbl)) return "positive";
   if (/neu/.test(lbl)) return "neutral";
   if (/neg/.test(lbl)) return "negative";
-  // Резерв: генеративная модель
   return await callTextGenHF(
     "Classify this review as positive, negative, or neutral. Return only one word.",
     text
   ).then(normalizeResp);
 }
 
-// Подсчёт существительных через POS-теггинг
-// Перебирает доступные модели, при неудаче — использует генеративную
+// Подсчёт существительных через POS
 async function callNounsPOSHF(text) {
   let lastErr = null;
   for (const m of POS_MODELS) {
@@ -161,20 +140,18 @@ async function callNounsPOSHF(text) {
       const flat = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
       if (!flat.length) throw new Error("Empty POS response");
       let count = 0;
-      // Считаем только NOUN и PROPN (существительные и собственные имена)
       for (const tok of flat) {
         const tag = (tok.entity_group || tok.entity || "").toUpperCase();
         if (tag.includes("NOUN") || tag.includes("PROPN") || ["NN", "NNS", "NNP", "NNPS"].includes(tag)) {
           count++;
         }
       }
-      ACTIVE_POS_MODEL = m; // запоминаем активную модель
+      ACTIVE_POS_MODEL = m;
       return count > 15 ? "high" : count >= 6 ? "medium" : "low";
     } catch (e) {
       lastErr = e;
     }
   }
-  // Резерв: генеративная модель
   const out = await callTextGenHF(
     "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Return only one of: High, Medium, Low.",
     text
@@ -182,8 +159,7 @@ async function callNounsPOSHF(text) {
   return normalizeLevel(out);
 }
 
-// Вызов генеративной модели (резервный путь)
-// Перебирает модели, пока одна не ответит
+// Генеративная модель (резерв)
 async function callTextGenHF(prompt, text) {
   let lastErr = null;
   for (const m of TEXTGEN_MODELS) {
@@ -193,7 +169,6 @@ async function callTextGenHF(prompt, text) {
         parameters: { max_new_tokens: 32, temperature: 0, return_full_text: false },
         options: { wait_for_model: true, use_cache: false }
       });
-      // Извлечение сгенерированного текста из разных возможных форматов ответа
       const txt = Array.isArray(data) && data[0]?.generated_text
         ? data[0].generated_text
         : (data?.generated_text ?? (typeof data === "string" ? data : JSON.stringify(data)));
@@ -206,25 +181,43 @@ async function callTextGenHF(prompt, text) {
   throw lastErr || new Error("All text-generation models unavailable");
 }
 
-// Выбор случайного отзыва из загруженного списка и его отображение
-function rand() {
-  if (!S.reviews.length) { setErr("No reviews loaded."); return; }
+// === ОСНОВНОЕ ИЗМЕНЕНИЕ: Загрузка TSV происходит ТОЛЬКО при нажатии на кнопку ===
+
+// Выбор случайного отзыва — теперь сам загружает TSV при первом вызове
+async function rand() {
+  setSpin(true);
+  setErr("");
+
+  // Если отзывы ещё не загружены — загружаем
+  if (!S.reviews || S.reviews.length === 0) {
+    try {
+      S.reviews = await loadTSV();
+    } catch (e) {
+      setErr("Failed to load reviews: " + e.message);
+      setSpin(false);
+      return;
+    }
+  }
+
+  // Показываем случайный отзыв
   const i = Math.floor(Math.random() * S.reviews.length);
   S.textEl.textContent = S.reviews[i].text || "";
+
   // Сброс результатов анализа
   S.sent.querySelector("span").textContent = "Sentiment: —";
   S.sent.className = "pill";
   S.sent.querySelector("i").className = "fa-regular fa-face-meh";
+
   S.nouns.querySelector("span").textContent = "Noun level: —";
   S.nouns.className = "pill";
-  setErr("");
+
+  setSpin(false);
 }
 
-// Обработчик кнопки "Analyze Sentiment"
-// Проверяет ввод, вызывает анализ, обновляет UI
+// Обработчик анализа тональности
 async function onSent() {
   const txt = S.textEl.textContent.trim();
-  if (!txt) { setErr("Select a review first."); return; }
+  if (!txt) { setErr("No review selected. Click 'Select Random Review' first."); return; }
   setErr(""); setSpin(true);
   try {
     const lbl = await callSentimentHF(txt);
@@ -240,11 +233,10 @@ async function onSent() {
   }
 }
 
-// Обработчик кнопки "Count Nouns"
-// Проверяет ввод, вызывает подсчёт, обновляет UI
+// Обработчик подсчёта существительных
 async function onNouns() {
   const txt = S.textEl.textContent.trim();
-  if (!txt) { setErr("Select a review first."); return; }
+  if (!txt) { setErr("No review selected. Click 'Select Random Review' first."); return; }
   setErr(""); setSpin(true);
   try {
     const lvl = await callNounsPOSHF(txt);
@@ -259,17 +251,17 @@ async function onNouns() {
   }
 }
 
-// Загрузка и парсинг TSV-файла с помощью Papa Parse
+// Загрузка TSV
 function fetchTSV(url) {
   return new Promise((res, rej) => {
-    if (typeof Papa === "undefined") { rej(new Error("Papa Parse not loaded")); return; }
+    if (typeof Papa === "undefined") return rej(new Error("Papa Parse not loaded"));
     Papa.parse(url, {
       download: true,
       delimiter: "\t",
       header: true,
       skipEmptyLines: true,
       complete: r => {
-        const rows = (r.data || []).filter(x => x && x.text); // фильтр по наличию текста
+        const rows = (r.data || []).filter(x => x && x.text);
         res(rows);
       },
       error: e => rej(e)
@@ -277,22 +269,20 @@ function fetchTSV(url) {
   });
 }
 
-// Поиск TSV-файла по нескольким возможным путям
-// Полезно при развёртывании на GitHub Pages с разными именами файлов
+// Поиск TSV по возможным путям
 async function loadTSV() {
   const candidates = ["./reviews_test.tsv", "./reviews_test (1).tsv", "./reviews_test%20(1).tsv"];
   for (const c of candidates) {
     try {
       const rows = await fetchTSV(c);
       if (rows.length) return rows;
-    } catch (_) { }
+    } catch (_) {}
   }
-  throw new Error("TSV not found");
+  throw new Error("reviews_test.tsv not found at any location.");
 }
 
-// Инициализация приложения: привязка DOM, обработчиков, загрузка данных
+// Инициализация DOM
 function init() {
-  S.reviews = [];
   S.textEl = document.getElementById("text");
   S.err = document.getElementById("err");
   S.spin = document.getElementById("spin");
@@ -307,18 +297,12 @@ function init() {
   S.btnSent.addEventListener("click", onSent);
   S.btnNouns.addEventListener("click", onNouns);
 
-  // Загрузка TSV и выбор первого отзыва
-  (async () => {
-    try {
-      S.reviews = await loadTSV();
-      rand();
-    } catch (e) {
-      setErr("Failed to load TSV: " + e.message);
-    }
-  })();
+  // Не загружаем TSV при старте — только по нажатию кнопки
+  S.reviews = null; // пока не загружено
+  S.textEl.textContent = "Click 'Select Random Review' to load and display a review.";
 }
 
-// Запуск инициализации после полной загрузки DOM
+// Запуск после загрузки DOM
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {
