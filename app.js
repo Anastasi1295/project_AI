@@ -128,7 +128,65 @@ async function callSentimentHF(text) {
   ).then(normalizeResp);
 }
 
-// Подсчёт существительных через POS
+// Улучшенная функция подсчёта существительных
+function countNounsLocally(text) {
+  // Очищаем текст от мусора
+  const clean = text
+    .replace(/https?:\/\/[^\s]+/g, '')                    // URL
+    .replace(/<[^>]+>/g, '')                             // HTML
+    .replace(/\b[A-Z]{2,}\d{4,}[A-Z\d]*\b/g, '')         // IDs: B001E5DZTS
+    .replace(/[^\w\s.'’-]/g, ' ')                        // Символы, кроме апострофов и дефисов
+    .replace(/\.{2,}/g, ' ');                            // Многоточие
+
+  // Разбиваем на слова, сохраняя апострофы и дефисы
+  const words = clean.match(/\b[a-zA-Z][a-zA-Z'\u2019-]*[a-zA-Z]|\b[a-zA-Z]\b/g) || [];
+
+  const commonNouns = new Set([
+    'product', 'bottle', 'bottles', 'review', 'water', 'taste', 'flavor', 'flavors',
+    'daughter', 'child', 'baby', 'formula', 'goat', 'milk', 'coconut', 'drink',
+    'package', 'shipping', 'price', 'value', 'amazon', 'customer', 'service',
+    'company', 'brand', 'name', 'website', 'order', 'shipment', 'box', 'can',
+    'container', 'label', 'recommendation', 'friend', 'doctor', 'dr', 'oz'
+  ]);
+
+  let count = 0;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i].toLowerCase();
+
+    // Пропускаем местоимения, глаголы, прилагательные
+    if (['i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them'].includes(word)) continue;
+    if (['this', 'that', 'these', 'those', 'my', 'your', 'his', 'her', 'its', 'our', 'their'].includes(word)) continue;
+    if (['is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did'].includes(word)) continue;
+    if (['very', 'really', 'just', 'only', 'too', 'so', 'not', 'well'].includes(word)) continue;
+
+    // Проверяем общие существительные
+    if (commonNouns.has(word)) {
+      count++;
+      continue;
+    }
+
+    // Обработка собственных имён: Dr. Oz → Dr, Oz
+    if (word === 'dr' && i + 1 < words.length && /^[A-Z]/.test(words[i+1])) {
+      count++;
+      continue;
+    }
+
+    // Слово с заглавной буквы не в начале предложения → вероятно, имя собственное
+    if (/^[A-Z][a-z]+$/.test(words[i]) && i > 0) {
+      const prev = words[i - 1];
+      const sentenceStart = ['.', '!', '?'].includes(prev?.slice(-1)) || i === 0;
+      if (!sentenceStart) {
+        count++;
+        continue;
+      }
+    }
+  }
+
+  return count;
+}
+
+// Подсчёт существительных через POS + улучшенный fallback
 async function callNounsPOSHF(text) {
   let lastErr = null;
   for (const m of POS_MODELS) {
@@ -139,6 +197,7 @@ async function callNounsPOSHF(text) {
       });
       const flat = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
       if (!flat.length) throw new Error("Empty POS response");
+
       let count = 0;
       for (const tok of flat) {
         const tag = (tok.entity_group || tok.entity || "").toUpperCase();
@@ -146,17 +205,29 @@ async function callNounsPOSHF(text) {
           count++;
         }
       }
+
       ACTIVE_POS_MODEL = m;
-      return count > 15 ? "high" : count >= 6 ? "medium" : "low";
+      const level = count > 15 ? "high" : count >= 6 ? "medium" : "low";
+
+      // ВАЖНО: делаем дополнительную проверку локально, если уровень вызывает сомнения
+      const localCount = countNounsLocally(text);
+      const localLevel = localCount > 15 ? "high" : localCount >= 6 ? "medium" : "low";
+
+      // Если разница больше 3 — доверяем локальному анализу больше
+      if (Math.abs(count - localCount) > 3) {
+        return localLevel;
+      }
+
+      return level;
     } catch (e) {
       lastErr = e;
     }
   }
-  const out = await callTextGenHF(
-    "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Return only one of: High, Medium, Low.",
-    text
-  );
-  return normalizeLevel(out);
+
+  // Резерв: полагаемся только на локальный подсчёт
+  const count = countNounsLocally(text);
+  const level = count > 15 ? "high" : count >= 6 ? "medium" : "low";
+  return level;
 }
 
 // Генеративная модель (резерв)
@@ -182,13 +253,10 @@ async function callTextGenHF(prompt, text) {
 }
 
 // === ОСНОВНОЕ ИЗМЕНЕНИЕ: Загрузка TSV происходит ТОЛЬКО при нажатии на кнопку ===
-
-// Выбор случайного отзыва — теперь сам загружает TSV при первом вызове
 async function rand() {
   setSpin(true);
   setErr("");
 
-  // Если отзывы ещё не загружены — загружаем
   if (!S.reviews || S.reviews.length === 0) {
     try {
       S.reviews = await loadTSV();
@@ -199,11 +267,9 @@ async function rand() {
     }
   }
 
-  // Показываем случайный отзыв
   const i = Math.floor(Math.random() * S.reviews.length);
   S.textEl.textContent = S.reviews[i].text || "";
 
-  // Сброс результатов анализа
   S.sent.querySelector("span").textContent = "Sentiment: —";
   S.sent.className = "pill";
   S.sent.querySelector("i").className = "fa-regular fa-face-meh";
@@ -297,8 +363,7 @@ function init() {
   S.btnSent.addEventListener("click", onSent);
   S.btnNouns.addEventListener("click", onNouns);
 
-  // Не загружаем TSV при старте — только по нажатию кнопки
-  S.reviews = null; // пока не загружено
+  S.reviews = null;
   S.textEl.textContent = "Click 'Select Random Review' to load and display a review.";
 }
 
