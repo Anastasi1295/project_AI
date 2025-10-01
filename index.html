@@ -1,199 +1,275 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Review Analyzer</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f5f5f5;
-            padding: 20px;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        h1 {
-            text-align: center;
-            margin-bottom: 24px;
-            color: #2c3e50;
-        }
-        
-        .input-group {
-            margin-bottom: 20px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #555;
-        }
-        
-        input[type="text"] {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-        
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #3498db;
-        }
-        
-        .button-group {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
-        }
-        
-        button {
-            flex: 1;
-            min-width: 140px;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            background: #3498db;
-            color: white;
-        }
-        
-        button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
-        }
-        
-        button:active {
-            transform: translateY(0);
-        }
-        
-        button:disabled {
-            background: #bdc3c7;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-        
-        .review-card {
-            background: #f8f9fa;
-            border: 2px solid #e9ecef;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            min-height: 120px;
-        }
-        
-        .result-card {
-            background: #f8f9fa;
-            border: 2px solid #e9ecef;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            text-align: center;
-            font-size: 24px;
-            min-height: 80px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .error {
-            background: #fee;
-            border: 2px solid #f5c6cb;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 20px;
-            color: #721c24;
-            display: none;
-        }
-        
-        .spinner {
-            display: none;
-            text-align: center;
-            font-size: 24px;
-            margin: 20px 0;
-        }
-        
-        .spinner i {
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        @media (max-width: 600px) {
-            .button-group {
-                flex-direction: column;
-            }
-            
-            button {
-                min-width: 100%;
-            }
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Review Analyzer</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <style>
+    :root {
+      --primary: #007bff;
+      --good: #28a745;
+      --warn: #ffc107;
+      --bad: #dc3545;
+      --text: #212529;
+      --bg-light: #f8f9fa;
+      --card-bg: #ffffff;
+      --border: #dee2e6;
+      --shadow: rgba(0, 0, 0, 0.1);
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--bg-light);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-weight: 600;
+      color: #343a40;
+      font-size: 2.2rem;
+      margin: 0;
+    }
+
+    p.subtitle {
+      color: #6c757d;
+      font-size: 1.1rem;
+      margin-top: 0.5rem;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 24px;
+      align-items: end;
+    }
+
+    .token {
+      flex: 1 1 300px;
+    }
+
+    .token label {
+      display: block;
+      font-size: 0.9rem;
+      color: #495057;
+      margin-bottom: 6px;
+    }
+
+    .token input {
+      width: 100%;
+      padding: 12px;
+      font-size: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background-color: var(--card-bg);
+      transition: border-color 0.3s ease;
+    }
+
+    .token input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-size: 1rem;
+      font-weight: 500;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px var(--shadow);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    #btnRandom {
+      background-color: #6c757d;
+      color: white;
+    }
+
+    #btnSent {
+      background-color: var(--primary);
+      color: white;
+    }
+
+    #btnNouns {
+      background-color: var(--good);
+      color: white;
+    }
+
+    #spin {
+      display: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    #text {
+      padding: 20px;
+      background-color: var(--card-bg);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 10px var(--shadow);
+      font-size: 1.05rem;
+      line-height: 1.7;
+      color: #495057;
+      min-height: 80px;
+      margin-bottom: 20px;
+    }
+
+    #err {
+      display: none;
+      padding: 14px;
+      background-color: #f8d7da;
+      color: var(--bad);
+      border: 1px solid #f5c6cb;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      margin-bottom: 20px;
+    }
+
+    .results {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-radius: 50px;
+      font-weight: 600;
+      font-size: 1rem;
+      box-shadow: 0 1px 6px var(--shadow);
+      min-width: 160px;
+      justify-content: center;
+    }
+
+    .pill i {
+      font-size: 1.1em;
+    }
+
+    .good { background: #d4edda; color: var(--good); }
+    .warn { background: #fff3cd; color: #856404; }
+    .bad  { background: #f8d7da; color: var(--bad); }
+
+    footer {
+      text-align: center;
+      margin-top: 3rem;
+      color: #6c757d;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 600px) {
+      .controls {
+        flex-direction: column;
+      }
+      .buttons {
+        width: 100%;
+      }
+      button {
+        flex: 1;
+        justify-content: center;
+        font-size: 0.95rem;
+        padding: 10px;
+      }
+      h1 {
+        font-size: 1.8rem;
+      }
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Review Analyzer</h1>
-        
-        <div class="input-group">
-            <label for="token-input">Hugging Face API Token (optional):</label>
-            <input type="text" id="token-input" placeholder="Enter your Hugging Face token for better rate limits">
-        </div>
-        
-        <div class="button-group">
-            <button id="random-review">
-                <i class="fas fa-random"></i> Select Random Review
-            </button>
-            <button id="analyze-sentiment">
-                <i class="fas fa-smile"></i> Analyze Sentiment
-            </button>
-            <button id="count-nouns">
-                <i class="fas fa-list"></i> Count Nouns
-            </button>
-        </div>
-        
-        <div class="review-card" id="review-text">
-            Click "Select Random Review" to load a review
-        </div>
-        
-        <div class="result-card" id="result">
-            Results will appear here
-        </div>
-        
-        <div class="error" id="error"></div>
-        
-        <div class="spinner" id="spinner">
-            <i class="fas fa-spinner"></i> Processing...
-        </div>
+  <div class="container">
+    <header>
+      <h1>🔍 Review Analyzer</h1>
+      <p class="subtitle">Analyze sentiment and noun density using AI models</p>
+    </header>
+
+    <div class="controls">
+      <div class="token">
+        <label for="token">🔑 Hugging Face Token (optional)</label>
+        <input type="text" id="token" placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" />
+      </div>
+
+      <div class="buttons">
+        <button id="btnRandom">
+          🎲 Random Review
+        </button>
+        <button id="btnSent">
+          😊 Analyze Sentiment
+        </button>
+        <button id="btnNouns">
+          🔤 Count Nouns
+        </button>
+        <div id="spin"></div>
+      </div>
     </div>
 
-    <script src="app.js"></script>
+    <div id="text">Select a review to begin analysis.</div>
+    <div id="err"></div>
+
+    <div class="results">
+      <div class="pill" id="sent">
+        <i class="fa-regular fa-face-meh"></i>
+        <span>Sentiment: —</span>
+      </div>
+      <div class="pill" id="nouns">
+        <i class="fas fa-tags"></i>
+        <span>Noun level: —</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Powered by Hugging Face • Models: cardiffnlp & vblagoje
+  </footer>
+
+  <script src="app.js"></script>
 </body>
 </html>
