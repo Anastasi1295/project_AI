@@ -1,360 +1,276 @@
-class ReviewAnalyzer {
-    constructor() {
-        this.reviews = [];
-        this.currentReview = null;
-        
-        this.initializeElements();
-        this.bindEvents();
-        this.loadReviews();
-    }
-    
-    initializeElements() {
-        this.tokenInput = document.getElementById('token-input');
-        this.randomReviewBtn = document.getElementById('random-review');
-        this.analyzeSentimentBtn = document.getElementById('analyze-sentiment');
-        this.countNounsBtn = document.getElementById('count-nouns');
-        this.reviewText = document.getElementById('review-text');
-        this.sentimentResult = document.getElementById('sentiment-result');
-        this.nounResult = document.getElementById('noun-result');
-        this.spinner = document.getElementById('spinner');
-        this.errorMessage = document.getElementById('error-message');
-    }
-    
-    bindEvents() {
-        this.randomReviewBtn.addEventListener('click', () => this.selectRandomReview());
-        this.analyzeSentimentBtn.addEventListener('click', () => this.analyzeSentiment());
-        this.countNounsBtn.addEventListener('click', () => this.countNouns());
-    }
-    
-    async loadReviews() {
-        try {
-            const response = await fetch('reviews_test.tsv');
-            if (!response.ok) {
-                throw new Error(`Failed to fetch TSV: ${response.status}`);
-            }
-            const tsvData = await response.text();
-            
-            return new Promise((resolve) => {
-                Papa.parse(tsvData, {
-                    header: true,
-                    delimiter: '\t',
-                    complete: (results) => {
-                        this.reviews = results.data.filter(review => review.text && review.text.trim());
-                        if (this.reviews.length === 0) {
-                            this.showError('No valid reviews found in the data file');
-                        }
-                        resolve();
-                    },
-                    error: (error) => {
-                        this.showError('Failed to parse reviews data: ' + error.message);
-                        resolve();
-                    }
-                });
-            });
-        } catch (error) {
-            this.showError('Failed to load reviews: ' + error.message);
-        }
-    }
-    
-    selectRandomReview() {
-        if (this.reviews.length === 0) {
-            this.showError('No reviews loaded yet. Please wait...');
-            return;
-        }
-        
-        const randomIndex = Math.floor(Math.random() * this.reviews.length);
-        this.currentReview = this.reviews[randomIndex];
-        this.reviewText.textContent = this.currentReview.text;
-        
-        this.resetResults();
-        this.hideError();
-    }
-    
-    async analyzeSentiment() {
-        if (!this.validateReview()) return;
-        
-        const prompt = `Classify this review as positive, negative, or neutral. Reply with only one word: "${this.currentReview.text.substring(0, 1000)}"`;
-        
-        try {
-            this.setLoading(true);
-            const response = await this.callApi(prompt);
-            this.processSentimentResponse(response);
-        } catch (error) {
-            this.showError('Sentiment analysis failed: ' + error.message);
-        } finally {
-            this.setLoading(false);
-        }
-    }
-    
-    async countNouns() {
-        if (!this.validateReview()) return;
-        
-        const prompt = `Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Reply with only one word: "${this.currentReview.text.substring(0, 1000)}"`;
-        
-        try {
-            this.setLoading(true);
-            const response = await this.callApi(prompt);
-            this.processNounResponse(response);
-        } catch (error) {
-            this.showError('Noun counting failed: ' + error.message);
-        } finally {
-            this.setLoading(false);
-        }
-    }
-    
-    async callApi(prompt) {
-        const token = this.tokenInput.value.trim();
-        const headers = {
-            'Content-Type': 'application/json',
-        };
-        
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-        
-        // Используем стабильную модель
-        const response = await fetch('https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium', {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify({
-                inputs: prompt,
-                parameters: {
-                    max_new_tokens: 10,
-                    return_full_text: false,
-                    temperature: 0.1,
-                    do_sample: true
-                }
-            })
-        });
-        
-        if (response.status === 402) {
-            throw new Error('Payment required - please check your API token');
-        }
-        
-        if (response.status === 429) {
-            throw new Error('Rate limit exceeded - please wait 30 seconds');
-        }
-        
-        if (response.status === 503) {
-            const retryAfter = response.headers.get('Retry-After') || 30;
-            throw new Error(`Model is loading. Wait ${retryAfter} seconds and try again.`);
-        }
-        
-        if (response.status === 404) {
-            throw new Error('Model not available. Try a different model.');
-        }
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API error: ${response.status} - ${errorText}`);
-        }
-        
-        const data = await response.json();
-        
-        if (data.error) {
-            throw new Error(data.error);
-        }
-        
-        // Обработка ответа
-        if (Array.isArray(data) && data[0] && data[0].generated_text) {
-            return data[0].generated_text;
-        }
-        
-        if (data.generated_text) {
-            return data.generated_text;
-        }
-        
-        // Для некоторых моделей ответ может быть в другом формате
-        if (Array.isArray(data) && data[0] && typeof data[0] === 'string') {
-            return data[0];
-        }
-        
-        throw new Error('Unexpected API response format: ' + JSON.stringify(data));
-    }
-    
-    processSentimentResponse(response) {
-        const cleanResponse = response.toLowerCase().trim();
-        
-        if (cleanResponse.includes('positive')) {
-            this.sentimentResult.textContent = '👍';
-            this.sentimentResult.style.color = '#27ae60';
-        } else if (cleanResponse.includes('negative')) {
-            this.sentimentResult.textContent = '👎';
-            this.sentimentResult.style.color = '#e74c3c';
-        } else if (cleanResponse.includes('neutral')) {
-            this.sentimentResult.textContent = '❓';
-            this.sentimentResult.style.color = '#f39c12';
-        } else {
-            // Если ответ не распознан, определяем по ключевым словам
-            const text = this.currentReview.text.toLowerCase();
-            if (text.includes('great') || text.includes('good') || text.includes('excellent') || text.includes('love') || text.includes('delicious') || text.includes('wonderful')) {
-                this.sentimentResult.textContent = '👍';
-                this.sentimentResult.style.color = '#27ae60';
-            } else if (text.includes('bad') || text.includes('terrible') || text.includes('hate') || text.includes('awful') || text.includes('disappointing')) {
-                this.sentimentResult.textContent = '👎';
-                this.sentimentResult.style.color = '#e74c3c';
-            } else {
-                this.sentimentResult.textContent = '❓';
-                this.sentimentResult.style.color = '#f39c12';
-            }
-        }
-    }
-    
-    processNounResponse(response) {
-        const cleanResponse = response.toLowerCase().trim();
-        
-        if (cleanResponse.includes('high')) {
-            this.nounResult.textContent = '🟢';
-            this.nounResult.style.color = '#27ae60';
-        } else if (cleanResponse.includes('medium')) {
-            this.nounResult.textContent = '🟡';
-            this.nounResult.style.color = '#f39c12';
-        } else if (cleanResponse.includes('low')) {
-            this.nounResult.textContent = '🔴';
-            this.nounResult.style.color = '#e74c3c';
-        } else {
-            // Fallback: считаем слова
-            const wordCount = this.currentReview.text.split(/\s+/).length;
-            if (wordCount > 15) {
-                this.nounResult.textContent = '🟢';
-                this.nounResult.style.color = '#27ae60';
-            } else if (wordCount > 6) {
-                this.nounResult.textContent = '🟡';
-                this.nounResult.style.color = '#f39c12';
-            } else {
-                this.nounResult.textContent = '🔴';
-                this.nounResult.style.color = '#e74c3c';
-            }
-        }
-    }
-    
-    validateReview() {
-        if (!this.currentReview || !this.currentReview.text) {
-            this.showError('Please select a review first');
-            return false;
-        }
-        return true;
-    }
-    
-    setLoading(loading) {
-        this.spinner.style.display = loading ? 'block' : 'none';
-        this.randomReviewBtn.disabled = loading;
-        this.analyzeSentimentBtn.disabled = loading;
-        this.countNounsBtn.disabled = loading;
-    }
-    
-    resetResults() {
-        this.sentimentResult.textContent = '❓';
-        this.sentimentResult.style.color = '#333';
-        this.nounResult.textContent = '⚪';
-        this.nounResult.style.color = '#333';
-    }
-    
-    showError(message) {
-        this.errorMessage.textContent = message;
-        this.errorMessage.style.display = 'block';
-        console.error('Error:', message);
-    }
-    
-    hideError() {
-        this.errorMessage.style.display = 'none';
-    }
+const S = {};
+
+function setSpin(v) {
+  S.spin.style.display = v ? "inline-flex" : "none";
+  S.btnRandom.disabled = v;
+  S.btnSent.disabled = v;
+  S.btnNouns.disabled = v;
 }
 
-// Альтернативная версия с выбором модели
-class ReviewAnalyzerWithModelSelection extends ReviewAnalyzer {
-    constructor() {
-        super();
-        this.availableModels = [
-            'microsoft/DialoGPT-medium',
-            'microsoft/DialoGPT-large', 
-            'facebook/blenderbot-400M-distill',
-            'gpt2'
-        ];
-        this.currentModelIndex = 0;
-    }
-    
-    async callApi(prompt) {
-        const token = this.tokenInput.value.trim();
-        const headers = {
-            'Content-Type': 'application/json',
-        };
-        
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
-        
-        let lastError = null;
-        
-        // Пробуем разные модели
-        for (let i = 0; i < this.availableModels.length; i++) {
-            const modelIndex = (this.currentModelIndex + i) % this.availableModels.length;
-            const model = this.availableModels[modelIndex];
-            
-            try {
-                console.log(`Trying model: ${model}`);
-                const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify({
-                        inputs: prompt,
-                        parameters: {
-                            max_new_tokens: 10,
-                            return_full_text: false,
-                            temperature: 0.1
-                        }
-                    })
-                });
-                
-                if (response.status === 503) {
-                    console.log(`Model ${model} is loading, trying next...`);
-                    continue;
-                }
-                
-                if (response.status === 429) {
-                    throw new Error('Rate limit exceeded - please wait 30 seconds');
-                }
-                
-                if (!response.ok) {
-                    console.log(`Model ${model} failed with status: ${response.status}`);
-                    continue;
-                }
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    console.log(`Model ${model} error:`, data.error);
-                    continue;
-                }
-                
-                // Успешно - используем эту модель
-                this.currentModelIndex = modelIndex;
-                console.log(`Success with model: ${model}`, data);
-                
-                if (Array.isArray(data) && data[0] && data[0].generated_text) {
-                    return data[0].generated_text;
-                }
-                
-                if (data.generated_text) {
-                    return data.generated_text;
-                }
-                
-                if (Array.isArray(data) && data[0] && typeof data[0] === 'string') {
-                    return data[0];
-                }
-                
-            } catch (error) {
-                lastError = error;
-                console.log(`Model ${model} exception:`, error.message);
-                continue;
-            }
-        }
-        
-        throw new Error(lastError?.message || 'All models are unavailable. Please try again later or use an API token.');
-    }
+function setErr(t) {
+  if (!t) {
+    S.err.style.display = "none";
+    S.err.textContent = "";
+    return;
+  }
+  S.err.style.display = "block";
+  S.err.textContent = t;
 }
 
-// Инициализация
-document.addEventListener('DOMContentLoaded', () => {
-    new ReviewAnalyzerWithModelSelection();
-});
+function mapSentIcon(lbl) {
+  if (lbl === "positive") return ["👍", "good", "fa-regular fa-face-smile"];
+  if (lbl === "negative") return ["👎", "bad", "fa-regular fa-face-frown"];
+  if (lbl === "neutral") return ["❓", "warn", "fa-regular fa-face-meh"];
+  return ["❓", "warn", "fa-regular fa-face-meh"];
+}
+
+function mapNounIcon(lbl) {
+  if (lbl === "high" || lbl === "many") return ["🟢", "good"];
+  if (lbl === "medium") return ["🟡", "warn"];
+  if (lbl === "low" || lbl === "few") return ["🔴", "bad"];
+  return ["—", "warn"];
+}
+
+function firstLineLower(t) {
+  return (t || "").split(/\r?\n/)[0].toLowerCase().trim();
+}
+
+function normalizeResp(raw) {
+  let s = firstLineLower(raw).replace(/^[^a-zа-яё]+/i, "");
+  if (/positive|positif|положит|хорош|good/.test(s)) return "positive";
+  if (/negative|negatif|отрицат|плох|bad/.test(s)) return "negative";
+  if (/neutral|нейтр/.test(s)) return "neutral";
+  return s;
+}
+
+function normalizeLevel(raw) {
+  let s = firstLineLower(raw);
+  if (/\b(high|many|>?\s*15|\bmore than 15\b|более\s*15|много)\b/.test(s)) return "high";
+  if (/\b(medium|6-15|6 to 15|средн|от\s*6\s*до\s*15)\b/.test(s)) return "medium";
+  if (/\b(low|few|<\s*6|мало|менее\s*6)\b/.test(s)) return "low";
+  return s;
+}
+
+const TEXTGEN_MODELS = [
+  "HuggingFaceH4/smol-llama-3.2-1.7B-instruct",
+  "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+];
+const SENTIMENT_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment";
+const POS_MODELS = [
+  "vblagoje/bert-english-uncased-finetuned-pos",
+  "vblagoje/bert-english-cased-finetuned-pos"
+];
+
+let ACTIVE_TEXTGEN_MODEL = TEXTGEN_MODELS[0];
+let ACTIVE_SENT_MODEL = SENTIMENT_MODEL;
+let ACTIVE_POS_MODEL = POS_MODELS[0];
+
+function getAuthHeader() {
+  const el = S.token;
+  const tok = el && el.value ? el.value.trim().replace(/[\s\r\n\t]+/g, "") : "";
+  return tok ? ("Bearer " + tok) : null;
+}
+
+async function hfRequest(modelId, body) {
+  const url = `https://api-inference.huggingface.co/models/${modelId}`;
+  const headers = {
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  };
+  const auth = getAuthHeader();
+  if (auth) headers["Authorization"] = auth;
+
+  const r = await fetch(url, {
+    method: "POST",
+    mode: "cors",
+    cache: "no-store",
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (r.status === 401) throw new Error("401 Unauthorized (укажите валидный HF токен hf_… с правом Read)");
+  if (r.status === 402) throw new Error("402 Payment required");
+  if (r.status === 429) throw new Error("429 Rate limited");
+  if (r.status === 404 || r.status === 403) throw new Error(`Model ${modelId} unavailable (${r.status})`);
+  if (!r.ok) {
+    const e = await r.text();
+    throw new Error(`API error ${r.status}: ${e.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+async function callSentimentHF(text) {
+  const data = await hfRequest(SENTIMENT_MODEL, {
+    inputs: text,
+    options: { wait_for_model: true, use_cache: false }
+  });
+  const arr = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
+  let best = arr.reduce((a, b) => (a && a.score > b.score) ? a : b, null) || arr[0];
+  if (!best) throw new Error("Empty response from sentiment model");
+  const lbl = best.label.toLowerCase();
+  if (/pos/.test(lbl)) return "positive";
+  if (/neu/.test(lbl)) return "neutral";
+  if (/neg/.test(lbl)) return "negative";
+  return await callTextGenHF(
+    "Classify this review as positive, negative, or neutral. Return only one word.",
+    text
+  ).then(normalizeResp);
+}
+
+async function callNounsPOSHF(text) {
+  let lastErr = null;
+  for (const m of POS_MODELS) {
+    try {
+      const data = await hfRequest(m, {
+        inputs: text,
+        options: { wait_for_model: true, use_cache: false }
+      });
+      const flat = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
+      if (!flat.length) throw new Error("Empty POS response");
+      let count = 0;
+      for (const tok of flat) {
+        const tag = (tok.entity_group || tok.entity || "").toUpperCase();
+        if (tag.includes("NOUN") || tag.includes("PROPN") || ["NN", "NNS", "NNP", "NNPS"].includes(tag)) {
+          count++;
+        }
+      }
+      ACTIVE_POS_MODEL = m;
+      return count > 15 ? "high" : count >= 6 ? "medium" : "low";
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  const out = await callTextGenHF(
+    "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Return only one of: High, Medium, Low.",
+    text
+  );
+  return normalizeLevel(out);
+}
+
+async function callTextGenHF(prompt, text) {
+  let lastErr = null;
+  for (const m of TEXTGEN_MODELS) {
+    try {
+      const data = await hfRequest(m, {
+        inputs: `${prompt}\n\nTEXT:\n${text}\n\nANSWER:`,
+        parameters: { max_new_tokens: 32, temperature: 0, return_full_text: false },
+        options: { wait_for_model: true, use_cache: false }
+      });
+      const txt = Array.isArray(data) && data[0]?.generated_text
+        ? data[0].generated_text
+        : (data?.generated_text ?? (typeof data === "string" ? data : JSON.stringify(data)));
+      ACTIVE_TEXTGEN_MODEL = m;
+      return txt;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("All text-generation models unavailable");
+}
+
+function rand() {
+  if (!S.reviews.length) { setErr("No reviews loaded."); return; }
+  const i = Math.floor(Math.random() * S.reviews.length);
+  S.textEl.textContent = S.reviews[i].text || "";
+  S.sent.querySelector("span").textContent = "Sentiment: —";
+  S.sent.className = "pill";
+  S.sent.querySelector("i").className = "fa-regular fa-face-meh";
+  S.nouns.querySelector("span").textContent = "Noun level: —";
+  S.nouns.className = "pill";
+  setErr("");
+}
+
+async function onSent() {
+  const txt = S.textEl.textContent.trim();
+  if (!txt) { setErr("Select a review first."); return; }
+  setErr(""); setSpin(true);
+  try {
+    const lbl = await callSentimentHF(txt);
+    const [ico, cls, face] = mapSentIcon(lbl);
+    S.sent.querySelector("span").textContent = "Sentiment: " + ico;
+    S.sent.className = "pill " + cls;
+    S.sent.querySelector("i").className = face;
+    S.sent.title = `model: ${ACTIVE_SENT_MODEL || ACTIVE_TEXTGEN_MODEL}`;
+  } catch (e) {
+    setErr(e.message);
+  } finally {
+    setSpin(false);
+  }
+}
+
+async function onNouns() {
+  const txt = S.textEl.textContent.trim();
+  if (!txt) { setErr("Select a review first."); return; }
+  setErr(""); setSpin(true);
+  try {
+    const lvl = await callNounsPOSHF(txt);
+    const [ico, cls] = mapNounIcon(lvl);
+    S.nouns.querySelector("span").textContent = "Noun level: " + ico;
+    S.nouns.className = "pill " + cls;
+    S.nouns.title = `model: ${ACTIVE_POS_MODEL || ACTIVE_TEXTGEN_MODEL}`;
+  } catch (e) {
+    setErr(e.message);
+  } finally {
+    setSpin(false);
+  }
+}
+
+function fetchTSV(url) {
+  return new Promise((res, rej) => {
+    if (typeof Papa === "undefined") { rej(new Error("Papa Parse not loaded")); return; }
+    Papa.parse(url, {
+      download: true,
+      delimiter: "\t",
+      header: true,
+      skipEmptyLines: true,
+      complete: r => {
+        const rows = (r.data || []).filter(x => x && x.text);
+        res(rows);
+      },
+      error: e => rej(e)
+    });
+  });
+}
+
+async function loadTSV() {
+  const candidates = ["./reviews_test.tsv", "./reviews_test (1).tsv", "./reviews_test%20(1).tsv"];
+  for (const c of candidates) {
+    try {
+      const rows = await fetchTSV(c);
+      if (rows.length) return rows;
+    } catch (_) { }
+  }
+  throw new Error("TSV not found");
+}
+
+function init() {
+  S.reviews = [];
+  S.textEl = document.getElementById("text");
+  S.err = document.getElementById("err");
+  S.spin = document.getElementById("spin");
+  S.btnRandom = document.getElementById("btnRandom");
+  S.btnSent = document.getElementById("btnSent");
+  S.btnNouns = document.getElementById("btnNouns");
+  S.token = document.getElementById("token") || document.getElementById("tokenInput");
+  S.sent = document.getElementById("sent");
+  S.nouns = document.getElementById("nouns");
+
+  S.btnRandom.addEventListener("click", rand);
+  S.btnSent.addEventListener("click", onSent);
+  S.btnNouns.addEventListener("click", onNouns);
+
+  (async () => {
+    try {
+      S.reviews = await loadTSV();
+      rand();
+    } catch (e) {
+      setErr("Failed to load TSV: " + e.message);
+    }
+  })();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
