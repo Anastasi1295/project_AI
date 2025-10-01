@@ -151,7 +151,7 @@ async function onSent() {
   }
 }
 
-// Подсчёт существительных — ТОЛЬКО ЛОКАЛЬНО (гарантированно правильно)
+// Подсчёт существительных 
 async function onNouns() {
   const txt = S.textEl.textContent.trim();
   if (!txt) return setErr("No review selected.");
