@@ -227,9 +227,11 @@ async function onNouns() {
   const level = getNounLevel(count);
 
   const [ico, cls] = mapNounIcon(level);
-  S.nouns.querySelector("span").textContent = `Noun level: ${ico} (${count})`;
+  // 🔴 УБРАНО: (${count})
+  S.nouns.querySelector("span").textContent = `Noun level: ${ico}`;
   S.nouns.className = `pill ${cls}`;
-  S.nouns.title = `Counted ${count} nouns`;
+  // Можно оставить количество в title при наведении (по желанию)
+  S.nouns.title = `Noun density: ${level}`; // или убрать полностью
 
   setSpin(false);
 }
@@ -259,6 +261,7 @@ async function rand() {
 
   S.nouns.querySelector("span").textContent = "Noun level: —";
   S.nouns.className = "pill";
+  S.nouns.title = "";
 
   setSpin(false);
 }
