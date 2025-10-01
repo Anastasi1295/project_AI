@@ -18,233 +18,195 @@ function setErr(t) {
 }
 
 function mapSentIcon(lbl) {
-  if (lbl === "positive") return ["👍", "good", "fa-regular fa-face-smile"];
-  if (lbl === "negative") return ["👎", "bad", "fa-regular fa-face-frown"];
-  if (lbl === "neutral") return ["❓", "warn", "fa-regular fa-face-meh"];
-  return ["❓", "warn", "fa-regular fa-face-meh"];
+  if (lbl === "positive") return ["👍", "good"];
+  if (lbl === "negative") return ["👎", "bad"];
+  if (lbl === "neutral") return ["❓", "warn"];
+  return ["❓", "warn"];
 }
 
 function mapNounIcon(lbl) {
-  if (lbl === "high" || lbl === "many") return ["🟢", "good"];
+  if (lbl === "high") return ["🟢", "good"];
   if (lbl === "medium") return ["🟡", "warn"];
-  if (lbl === "low" || lbl === "few") return ["🔴", "bad"];
+  if (lbl === "low") return ["🔴", "bad"];
   return ["—", "warn"];
 }
 
-function firstLineLower(t) {
-  return (t || "").split(/\r?\n/)[0].toLowerCase().trim();
+// Извлекает первую строку, приводит к нижнему регистру
+function firstLineLower(text) {
+  return (text || "").split(/\r?\n/)[0].trim().toLowerCase();
 }
 
-function normalizeResp(raw) {
-  let s = firstLineLower(raw).replace(/^[^a-zа-яё]+/i, "");
-  if (/positive|positif|положит|хорош|good/.test(s)) return "positive";
-  if (/negative|negatif|отрицат|плох|bad/.test(s)) return "negative";
-  if (/neutral|нейтр/.test(s)) return "neutral";
-  return s;
-}
+// Основная модель (вместо нерабочего falcon-7b-instruct)
+const MODEL_ID = "HuggingFaceH4/zephyr-7b-beta";
 
-function normalizeLevel(raw) {
-  let s = firstLineLower(raw);
-  if (/\b(high|many|>?\s*15|\bmore than 15\b|более\s*15|много)\b/.test(s)) return "high";
-  if (/\b(medium|6-15|6 to 15|средн|от\s*6\s*до\s*15)\b/.test(s)) return "medium";
-  if (/\b(low|few|<\s*6|мало|менее\s*6)\b/.test(s)) return "low";
-  return s;
-}
-
-const TEXTGEN_MODELS = [
-  "HuggingFaceH4/smol-llama-3.2-1.7B-instruct",
-  "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-];
-const SENTIMENT_MODEL = "cardiffnlp/twitter-xlm-roberta-base-sentiment";
-const POS_MODELS = [
-  "vblagoje/bert-english-uncased-finetuned-pos",
-  "vblagoje/bert-english-cased-finetuned-pos"
-];
-
-let ACTIVE_TEXTGEN_MODEL = TEXTGEN_MODELS[0];
-let ACTIVE_SENT_MODEL = SENTIMENT_MODEL;
-let ACTIVE_POS_MODEL = POS_MODELS[0];
-
+// Получение Bearer-токена, если указан
 function getAuthHeader() {
-  const el = S.token;
-  const tok = el && el.value ? el.value.trim().replace(/[\s\r\n\t]+/g, "") : "";
-  return tok ? ("Bearer " + tok) : null;
+  const tokenEl = S.token;
+  const token = tokenEl?.value.trim();
+  return token ? `Bearer ${token.replace(/\s+/g, "")}` : null;
 }
 
-async function hfRequest(modelId, body) {
-  const url = `https://api-inference.huggingface.co/models/${modelId}`;
+// Универсальная функция вызова модели
+async function callApi(prompt, text) {
+  const fullPrompt = `${prompt}
+  
+Review:
+\`\`\`
+${text}
+\`\`\``;
+
+  const body = {
+    inputs: fullPrompt,
+    parameters: {
+      max_new_tokens: 32,
+      temperature: 0,
+      return_full_text: false
+    },
+    options: {
+      wait_for_model: true,
+      use_cache: false
+    }
+  };
+
   const headers = {
-    "Accept": "application/json",
     "Content-Type": "application/json"
   };
   const auth = getAuthHeader();
   if (auth) headers["Authorization"] = auth;
 
-  const r = await fetch(url, {
-    method: "POST",
-    mode: "cors",
-    cache: "no-store",
-    headers,
-    body: JSON.stringify(body)
-  });
+  try {
+    const r = await fetch(`https://api-inference.huggingface.co/models/${MODEL_ID}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
 
-  if (r.status === 401) throw new Error("401 Unauthorized (укажите валидный HF токен hf_… с правом Read)");
-  if (r.status === 402) throw new Error("402 Payment required");
-  if (r.status === 429) throw new Error("429 Rate limited");
-  if (r.status === 404 || r.status === 403) throw new Error(`Model ${modelId} unavailable (${r.status})`);
-  if (!r.ok) {
-    const e = await r.text();
-    throw new Error(`API error ${r.status}: ${e.slice(0, 200)}`);
-  }
-  return r.json();
-}
-
-async function callSentimentHF(text) {
-  const data = await hfRequest(SENTIMENT_MODEL, {
-    inputs: text,
-    options: { wait_for_model: true, use_cache: false }
-  });
-  const arr = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
-  let best = arr.reduce((a, b) => (a && a.score > b.score) ? a : b, null) || arr[0];
-  if (!best) throw new Error("Empty response from sentiment model");
-  const lbl = best.label.toLowerCase();
-  if (/pos/.test(lbl)) return "positive";
-  if (/neu/.test(lbl)) return "neutral";
-  if (/neg/.test(lbl)) return "negative";
-  return await callTextGenHF(
-    "Classify this review as positive, negative, or neutral. Return only one word.",
-    text
-  ).then(normalizeResp);
-}
-
-async function callNounsPOSHF(text) {
-  let lastErr = null;
-  for (const m of POS_MODELS) {
-    try {
-      const data = await hfRequest(m, {
-        inputs: text,
-        options: { wait_for_model: true, use_cache: false }
-      });
-      const flat = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : (Array.isArray(data) ? data : []);
-      if (!flat.length) throw new Error("Empty POS response");
-      let count = 0;
-      for (const tok of flat) {
-        const tag = (tok.entity_group || tok.entity || "").toUpperCase();
-        if (tag.includes("NOUN") || tag.includes("PROPN") || ["NN", "NNS", "NNP", "NNPS"].includes(tag)) {
-          count++;
-        }
-      }
-      ACTIVE_POS_MODEL = m;
-      return count > 15 ? "high" : count >= 6 ? "medium" : "low";
-    } catch (e) {
-      lastErr = e;
+    if (r.status === 401) throw new Error("401 Unauthorized – проверьте токен");
+    if (r.status === 402) throw new Error("402 Payment required – требуется платная подписка");
+    if (r.status === 429) throw new Error("429 Rate limited – слишком много запросов");
+    if (!r.ok) {
+      const errText = await r.text();
+      throw new Error(`Ошибка ${r.status}: ${errText.slice(0, 100)}`);
     }
+
+    const data = await r.json();
+    return Array.isArray(data) && data[0]?.generated_text
+      ? data[0].generated_text
+      : (data?.generated_text || "");
+  } catch (error) {
+    // Проброс ошибки для обработки в UI
+    throw error;
   }
-  const out = await callTextGenHF(
-    "Count the nouns in this review and return only High (>15), Medium (6-15), or Low (<6). Return only one of: High, Medium, Low.",
-    text
-  );
-  return normalizeLevel(out);
 }
 
-async function callTextGenHF(prompt, text) {
-  let lastErr = null;
-  for (const m of TEXTGEN_MODELS) {
-    try {
-      const data = await hfRequest(m, {
-        inputs: `${prompt}\n\nTEXT:\n${text}\n\nANSWER:`,
-        parameters: { max_new_tokens: 32, temperature: 0, return_full_text: false },
-        options: { wait_for_model: true, use_cache: false }
-      });
-      const txt = Array.isArray(data) && data[0]?.generated_text
-        ? data[0].generated_text
-        : (data?.generated_text ?? (typeof data === "string" ? data : JSON.stringify(data)));
-      ACTIVE_TEXTGEN_MODEL = m;
-      return txt;
-    } catch (e) {
-      lastErr = e;
-    }
+// Анализ тональности по правилам из промта
+async function onSent() {
+  const text = S.textEl.textContent.trim();
+  if (!text) {
+    setErr("Select a review first.");
+    return;
   }
-  throw lastErr || new Error("All text-generation models unavailable");
+  setSpin(true);
+  setErr("");
+  try {
+    const prompt = `Read the customer review between triple quotes and decide the overall sentiment. Rules:
+- Judge overall tone and intent, not isolated words.
+- Ignore sarcasm unless clearly signaled.
+- Ignore star/emoji counts and metadata.
+- If uncertain, choose "neutral".
+Return only one word: positive, negative, or neutral.`;
+    const raw = await callApi(prompt, text);
+    const resp = firstLineLower(raw);
+
+    let label = "neutral"; // default
+    if (resp.includes("positive")) label = "positive";
+    else if (resp.includes("negative")) label = "negative";
+    else if (resp.includes("neutral")) label = "neutral";
+
+    const [ico, cls] = mapSentIcon(label);
+    S.sent.querySelector("span").textContent = `Sentiment: ${ico}`;
+    S.sent.className = `pill ${cls}`;
+  } catch (e) {
+    setErr(e.message);
+  } finally {
+    setSpin(false);
+  }
 }
 
+// Подсчёт существительных по строгим правилам
+async function onNouns() {
+  const text = S.textEl.textContent.trim();
+  if (!text) {
+    setErr("Select a review first.");
+    return;
+  }
+  setSpin(true);
+  setErr("");
+  try {
+    const prompt = `From the review between triple quotes, count how many tokens are NOUNS, then map the count to a level. Rules:
+- Tokenize the text (treat hyphenated terms as one token).
+- Select ONLY nouns: common and proper, singular or plural (e.g., “product”, “bottles”, “Amazon”, “Dr. Oz”).
+- DO NOT count: pronouns, verbs, adjectives, adverbs, numbers, dates, interjections, symbols, or emojis.
+- Count all noun tokens (repeated nouns count each time they appear).
+- Ignore HTML, URLs, and IDs.
+LEVEL RULES:
+- high → noun count > 15
+- medium → noun count 6–15
+- low → noun count < 6
+Return exactly one word in lowercase — high, medium, or low — on the FIRST line. No punctuation or extra text.`;
+    const raw = await callApi(prompt, text);
+    const resp = firstLineLower(raw);
+
+    let level = "medium"; // fallback
+    if (resp.startsWith("high") || /\bhigh\b/.test(resp)) level = "high";
+    else if (resp.startsWith("medium") || /\bmedium\b/.test(resp)) level = "medium";
+    else if (resp.startsWith("low") || /\blow\b/.test(resp)) level = "low";
+
+    const [ico, cls] = mapNounIcon(level);
+    S.nouns.querySelector("span").textContent = `Noun level: ${ico}`;
+    S.nouns.className = `pill ${cls}`;
+  } catch (e) {
+    setErr(e.message);
+  } finally {
+    setSpin(false);
+  }
+}
+
+// Выбор случайного отзыва
 function rand() {
-  if (!S.reviews.length) { setErr("No reviews loaded."); return; }
-  const i = Math.floor(Math.random() * S.reviews.length);
-  S.textEl.textContent = S.reviews[i].text || "";
+  if (!S.reviews?.length) {
+    setErr("No reviews loaded.");
+    return;
+  }
+  const idx = Math.floor(Math.random() * S.reviews.length);
+  S.textEl.textContent = S.reviews[idx].text || "(no text)";
   S.sent.querySelector("span").textContent = "Sentiment: —";
   S.sent.className = "pill";
-  S.sent.querySelector("i").className = "fa-regular fa-face-meh";
   S.nouns.querySelector("span").textContent = "Noun level: —";
   S.nouns.className = "pill";
   setErr("");
 }
 
-async function onSent() {
-  const txt = S.textEl.textContent.trim();
-  if (!txt) { setErr("Select a review first."); return; }
-  setErr(""); setSpin(true);
-  try {
-    const lbl = await callSentimentHF(txt);
-    const [ico, cls, face] = mapSentIcon(lbl);
-    S.sent.querySelector("span").textContent = "Sentiment: " + ico;
-    S.sent.className = "pill " + cls;
-    S.sent.querySelector("i").className = face;
-    S.sent.title = `model: ${ACTIVE_SENT_MODEL || ACTIVE_TEXTGEN_MODEL}`;
-  } catch (e) {
-    setErr(e.message);
-  } finally {
-    setSpin(false);
-  }
-}
-
-async function onNouns() {
-  const txt = S.textEl.textContent.trim();
-  if (!txt) { setErr("Select a review first."); return; }
-  setErr(""); setSpin(true);
-  try {
-    const lvl = await callNounsPOSHF(txt);
-    const [ico, cls] = mapNounIcon(lvl);
-    S.nouns.querySelector("span").textContent = "Noun level: " + ico;
-    S.nouns.className = "pill " + cls;
-    S.nouns.title = `model: ${ACTIVE_POS_MODEL || ACTIVE_TEXTGEN_MODEL}`;
-  } catch (e) {
-    setErr(e.message);
-  } finally {
-    setSpin(false);
-  }
-}
-
-function fetchTSV(url) {
-  return new Promise((res, rej) => {
-    if (typeof Papa === "undefined") { rej(new Error("Papa Parse not loaded")); return; }
-    Papa.parse(url, {
+// Загрузка TSV через Papa Parse
+function loadTSV() {
+  return new Promise((resolve, reject) => {
+    Papa.parse("./reviews_test.tsv", {
       download: true,
       delimiter: "\t",
       header: true,
       skipEmptyLines: true,
-      complete: r => {
-        const rows = (r.data || []).filter(x => x && x.text);
-        res(rows);
+      complete: (res) => {
+        const rows = (res.data || []).filter(r => r.text);
+        if (rows.length === 0) return reject(new Error("No reviews found in TSV"));
+        resolve(rows);
       },
-      error: e => rej(e)
+      error: (err) => reject(new Error(`TSV load failed: ${err}`))
     });
   });
 }
 
-async function loadTSV() {
-  const candidates = ["./reviews_test.tsv", "./reviews_test (1).tsv", "./reviews_test%20(1).tsv"];
-  for (const c of candidates) {
-    try {
-      const rows = await fetchTSV(c);
-      if (rows.length) return rows;
-    } catch (_) { }
-  }
-  throw new Error("TSV not found");
-}
-
+// Инициализация при загрузке DOM
 function init() {
-  S.reviews = [];
   S.textEl = document.getElementById("text");
   S.err = document.getElementById("err");
   S.spin = document.getElementById("spin");
@@ -259,18 +221,17 @@ function init() {
   S.btnSent.addEventListener("click", onSent);
   S.btnNouns.addEventListener("click", onNouns);
 
-  (async () => {
-    try {
-      S.reviews = await loadTSV();
+  loadTSV()
+    .then(reviews => {
+      S.reviews = reviews;
       rand();
-    } catch (e) {
-      setErr("Failed to load TSV: " + e.message);
-    }
-  })();
+    })
+    .catch(err => {
+      setErr("Failed to load reviews: " + err.message);
+    });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
-}
+// Запуск
+document.readyState === "loading"
+  ? document.addEventListener("DOMContentLoaded", init)
+  : init();
