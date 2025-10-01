@@ -1,69 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Review Analyzer</title>
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<style>
-  :root{--bg:#0f1115;--fg:#e6e6e9;--muted:#9aa0a6;--card:#171a21;--accent:#3a86ff;--bad:#ff4d4f;--warn:#ffcc00;--good:#22c55e}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji";}
-  .wrap{max-width:780px;margin:40px auto;padding:20px}
-  h1{margin:0 0 16px;font-size:24px}
-  .bar{display:grid;grid-template-columns:1fr;gap:12px}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  input[type="password"],input[type="text"]{background:#11141a;border:1px solid #222734;border-radius:10px;padding:10px 12px;color:var(--fg);flex:1;min-width:240px}
-  .btn{cursor:pointer;border:1px solid #2a2f3d;background:#151923;color:var(--fg);padding:10px 14px;border-radius:10px;transition:.15s;display:inline-flex;gap:8px;align-items:center}
-  .btn:disabled{opacity:.5;cursor:not-allowed}
-  .btn:hover{border-color:#3a4154;background:#1a1f2a}
-  .grid{display:grid;grid-template-columns:1fr;gap:12px}
-  .card{background:var(--card);border:1px solid #222734;border-radius:14px;padding:16px}
-  .label{font-size:12px;color:var(--muted);margin-bottom:6px}
-  #text{white-space:pre-wrap;line-height:1.5}
-  .status{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-  .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #2a2f3d;background:#11141a;border-radius:999px;padding:8px 12px}
-  .pill i{opacity:.9}
-  .pill.bad{border-color:var(--bad)}
-  .pill.warn{border-color:var(--warn)}
-  .pill.good{border-color:var(--good)}
-  #err{display:none;background:rgba(255,77,79,.12);border:1px solid var(--bad);color:#ffb3b3;padding:10px 12px;border-radius:12px}
-  .spinner{display:none}
-  .spinner i{animation:spin 1s linear infinite;color:var(--accent)}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  @media (min-width:700px){.bar{grid-template-columns:1fr auto}}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Analyzer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 24px;
+            color: #2c3e50;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            flex: 1;
+            min-width: 140px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #3498db;
+            color: white;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .review-card {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            min-height: 120px;
+        }
+        
+        .result-card {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 24px;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .error {
+            background: #fee;
+            border: 2px solid #f5c6cb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+            color: #721c24;
+            display: none;
+        }
+        
+        .spinner {
+            display: none;
+            text-align: center;
+            font-size: 24px;
+            margin: 20px 0;
+        }
+        
+        .spinner i {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 600px) {
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                min-width: 100%;
+            }
+        }
+    </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Review Analyzer</h1>
-  <div class="bar">
-    <div class="row">
-      <input id="token" type="password" placeholder="Hugging Face token (optional)">
+    <div class="container">
+        <h1>Review Analyzer</h1>
+        
+        <div class="input-group">
+            <label for="token-input">Hugging Face API Token (optional):</label>
+            <input type="text" id="token-input" placeholder="Enter your Hugging Face token for better rate limits">
+        </div>
+        
+        <div class="button-group">
+            <button id="random-review">
+                <i class="fas fa-random"></i> Select Random Review
+            </button>
+            <button id="analyze-sentiment">
+                <i class="fas fa-smile"></i> Analyze Sentiment
+            </button>
+            <button id="count-nouns">
+                <i class="fas fa-list"></i> Count Nouns
+            </button>
+        </div>
+        
+        <div class="review-card" id="review-text">
+            Click "Select Random Review" to load a review
+        </div>
+        
+        <div class="result-card" id="result">
+            Results will appear here
+        </div>
+        
+        <div class="error" id="error"></div>
+        
+        <div class="spinner" id="spinner">
+            <i class="fas fa-spinner"></i> Processing...
+        </div>
     </div>
-    <div class="row">
-      <button id="btnRandom" class="btn"><i class="fa-solid fa-shuffle"></i><span>Select Random Review</span></button>
-      <button id="btnSent" class="btn"><i class="fa-solid fa-magnifying-glass-chart"></i><span>Analyze Sentiment</span></button>
-      <button id="btnNouns" class="btn"><i class="fa-solid fa-spell-check"></i><span>Count Nouns</span></button>
-      <div class="spinner" id="spin"><i class="fa-solid fa-circle-notch"></i></div>
-    </div>
-  </div>
-  <div class="grid" style="margin-top:14px">
-    <div id="err"></div>
-    <div class="card">
-      <div class="label">Review</div>
-      <div id="text"></div>
-    </div>
-    <div class="card">
-      <div class="label">Results</div>
-      <div class="status">
-        <div class="pill" id="sent"><i class="fa-regular fa-face-meh"></i><span>Sentiment: —</span></div>
-        <div class="pill" id="nouns"><i class="fa-regular fa-circle-dot"></i><span>Noun level: —</span></div>
-      </div>
-    </div>
-  </div>
-</div>
-<script src="./app.js"></script>
+
+    <script src="app.js"></script>
 </body>
 </html>
